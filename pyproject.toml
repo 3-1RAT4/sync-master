@@ -1,8 +1,11 @@
 [project]
 name = "sync-master"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "AI-orchestrated multi-source sync pipeline"
 requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+]
 dependencies = [
     "typer>=0.12",
     "pyyaml>=6.0",
