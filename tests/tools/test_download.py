@@ -49,3 +49,26 @@ def test_download_video_uses_sanitized_title_as_filename_when_given(tmp_path):
     result = download_video("v1", tmp_path, title="My Video Title", downloader_factory=fake_factory)
 
     assert result == tmp_path / "My_Video_Title.mp4"
+
+
+def test_download_video_skips_download_when_file_already_exists(tmp_path):
+    existing = tmp_path / "My_Video_Title.mp4"
+    existing.write_text("already downloaded")
+
+    def failing_factory(opts):
+        raise AssertionError("must not invoke downloader when file already exists")
+
+    result = download_video("v1", tmp_path, title="My Video Title", downloader_factory=failing_factory)
+
+    assert result == existing
+
+
+def test_download_video_downloads_when_no_matching_file_exists_yet(tmp_path):
+    (tmp_path / "Some_Other_Video.mp4").write_text("unrelated file")
+
+    def fake_factory(opts):
+        return FakeYoutubeDL(opts)
+
+    result = download_video("v1", tmp_path, title="My Video Title", downloader_factory=fake_factory)
+
+    assert result == tmp_path / "My_Video_Title.mp4"
