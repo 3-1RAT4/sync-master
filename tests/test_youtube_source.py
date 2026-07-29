@@ -1,4 +1,10 @@
-from sync_master.sources.youtube import VideoItem, diff_new_videos, fetch_playlist_items
+from sync_master.sources.youtube import (
+    PlaylistInfo,
+    VideoItem,
+    diff_new_videos,
+    fetch_my_playlists,
+    fetch_playlist_items,
+)
 
 
 class FakePlaylistItemsRequest:
@@ -23,12 +29,38 @@ class FakePlaylistItemsResource:
         return None
 
 
-class FakeYoutubeClient:
+class FakePlaylistsRequest:
+    def __init__(self, pages, index):
+        self._pages = pages
+        self._index = index
+
+    def execute(self):
+        return self._pages[self._index]
+
+
+class FakePlaylistsResource:
     def __init__(self, pages):
         self._pages = pages
 
+    def list(self, **kwargs):
+        return FakePlaylistsRequest(self._pages, index=0)
+
+    def list_next(self, previous_request, response):
+        if response.get("nextPageToken"):
+            return FakePlaylistsRequest(self._pages, index=previous_request._index + 1)
+        return None
+
+
+class FakeYoutubeClient:
+    def __init__(self, pages=None, playlist_pages=None):
+        self._pages = pages
+        self._playlist_pages = playlist_pages
+
     def playlistItems(self):
         return FakePlaylistItemsResource(self._pages)
+
+    def playlists(self):
+        return FakePlaylistsResource(self._playlist_pages)
 
 
 def _item(video_id, title, published_at):
@@ -89,3 +121,35 @@ def test_diff_new_videos_excludes_videos_already_in_state():
     new_items = diff_new_videos(state, fetched)
 
     assert [item.video_id for item in new_items] == ["v2"]
+
+
+def _playlist(playlist_id, title):
+    return {"id": playlist_id, "snippet": {"title": title}}
+
+
+def test_fetch_my_playlists_returns_playlist_info_from_single_page():
+    client = FakeYoutubeClient(
+        playlist_pages=[
+            {
+                "items": [_playlist("PL123", "My Playlist[!]")],
+                "nextPageToken": None,
+            }
+        ]
+    )
+
+    playlists = fetch_my_playlists(youtube_client=client)
+
+    assert playlists == [PlaylistInfo(playlist_id="PL123", title="My Playlist[!]")]
+
+
+def test_fetch_my_playlists_follows_pagination_across_pages():
+    client = FakeYoutubeClient(
+        playlist_pages=[
+            {"items": [_playlist("PL1", "First")], "nextPageToken": "token2"},
+            {"items": [_playlist("PL2", "Second")], "nextPageToken": None},
+        ]
+    )
+
+    playlists = fetch_my_playlists(youtube_client=client)
+
+    assert [p.playlist_id for p in playlists] == ["PL1", "PL2"]

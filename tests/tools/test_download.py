@@ -40,3 +40,12 @@ def test_download_video_passes_correct_url(tmp_path):
     download_video("v1", tmp_path, downloader_factory=lambda opts: CapturingYoutubeDL(opts))
 
     assert captured_urls == ["https://www.youtube.com/watch?v=v1"]
+
+
+def test_download_video_uses_sanitized_title_as_filename_when_given(tmp_path):
+    def fake_factory(opts):
+        return FakeYoutubeDL(opts)
+
+    result = download_video("v1", tmp_path, title="My Video Title", downloader_factory=fake_factory)
+
+    assert result == tmp_path / "My_Video_Title.mp4"

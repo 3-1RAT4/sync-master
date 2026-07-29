@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import typer
@@ -12,7 +13,7 @@ CONFIG_DIR = Path.home() / ".config" / "sync-master"
 
 @app.command()
 def run(dry_run: bool = False) -> None:
-    """Fetch sources, diff state, and run the agent over pending videos."""
+    """Discover flagged playlists, diff state, and dispatch actions for pending videos."""
     try:
         perform_run(CONFIG_DIR, dry_run=dry_run)
     except LockHeldError:
@@ -26,6 +27,28 @@ def bootstrap() -> None:
     from sync_master.bootstrap import run_bootstrap
 
     run_bootstrap(CONFIG_DIR)
+
+
+@app.command()
+def youtube_login() -> None:
+    """Run the one-time YouTube OAuth flow (opens a browser) and save the refresh token."""
+    from dotenv import load_dotenv, set_key
+
+    from sync_master.youtube_auth import run_oauth_login_flow
+
+    credentials_path = CONFIG_DIR / "credentials.env"
+    load_dotenv(credentials_path)
+
+    client_id = os.environ.get("YOUTUBE_OAUTH_CLIENT_ID")
+    client_secret = os.environ.get("YOUTUBE_OAUTH_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        typer.echo("Set YOUTUBE_OAUTH_CLIENT_ID and YOUTUBE_OAUTH_CLIENT_SECRET in credentials.env first.")
+        raise typer.Exit(code=1)
+
+    refresh_token = run_oauth_login_flow(client_id, client_secret)
+
+    set_key(str(credentials_path), "YOUTUBE_OAUTH_REFRESH_TOKEN", refresh_token)
+    typer.echo(f"Saved YouTube refresh token to {credentials_path}")
 
 
 @app.command()

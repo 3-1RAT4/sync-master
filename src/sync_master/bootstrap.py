@@ -1,15 +1,22 @@
 import shutil
 from pathlib import Path
 
-REQUIRED_CREDENTIAL_KEYS = ["YOUTUBE_API_KEY", "LLM_API_KEY"]
+REQUIRED_CREDENTIAL_KEYS = ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY"]
 REQUIRED_EXTERNAL_TOOLS = ["yt-dlp", "ffmpeg"]
 
 CREDENTIALS_TEMPLATE = """# Fill in the values below
-YOUTUBE_API_KEY=
+# Google Cloud OAuth Client (needed to list/fetch your own playlists,
+# including private ones) - see docs/setup.md
+YOUTUBE_OAUTH_CLIENT_ID=
+YOUTUBE_OAUTH_CLIENT_SECRET=
+# Obtained automatically by `sync-master youtube-login` - don't fill in by hand
+YOUTUBE_OAUTH_REFRESH_TOKEN=
 LLM_API_KEY=
 SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REFRESH_TOKEN=
+# Optional: only needed for speaker diarization (the "diarization" extra)
+HUGGINGFACE_TOKEN=
 """
 
 LLM_YAML_TEMPLATE = """provider: deepseek
@@ -17,9 +24,11 @@ model: deepseek-chat
 base_url: https://api.deepseek.com
 """
 
+SETTINGS_YAML_TEMPLATE = f"""output_base_dir: {Path.home() / "sync-master-output"}
+"""
+
 
 def scaffold_config_dir(config_dir: Path) -> None:
-    (config_dir / "sources").mkdir(parents=True, exist_ok=True)
     (config_dir / "logs").mkdir(parents=True, exist_ok=True)
 
     defaults = {
@@ -27,6 +36,7 @@ def scaffold_config_dir(config_dir: Path) -> None:
         "spotify_overrides.json": "{}",
         "credentials.env": CREDENTIALS_TEMPLATE,
         "llm.yaml": LLM_YAML_TEMPLATE,
+        "settings.yaml": SETTINGS_YAML_TEMPLATE,
     }
     for filename, content in defaults.items():
         path = config_dir / filename
@@ -65,6 +75,11 @@ def run_bootstrap(config_dir: Path) -> None:
         typer.echo(f"Missing credentials in {config_dir / 'credentials.env'}: {', '.join(missing)}")
         typer.echo("Please edit that file and re-run bootstrap.")
 
+    typer.echo(
+        "Run `sync-master youtube-login` to complete the one-time YouTube OAuth "
+        "authorization (needed to list and fetch your own playlists, including "
+        "private ones)."
+    )
     typer.echo(
         "For Spotify playlist sync, run `sync-master spotify-login` to complete "
         "the one-time OAuth authorization (requires playlist-modify scope)."

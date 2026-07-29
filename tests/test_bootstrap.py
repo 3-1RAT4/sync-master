@@ -11,12 +11,13 @@ def test_scaffold_config_dir_creates_expected_structure(tmp_path):
 
     scaffold_config_dir(config_dir)
 
-    assert (config_dir / "sources").is_dir()
     assert (config_dir / "logs").is_dir()
     assert (config_dir / "state.json").exists()
     assert (config_dir / "spotify_overrides.json").exists()
     assert (config_dir / "credentials.env").exists()
     assert (config_dir / "llm.yaml").exists()
+    assert (config_dir / "settings.yaml").exists()
+    assert not (config_dir / "sources").exists()
 
 
 def test_scaffold_config_dir_does_not_overwrite_existing_files(tmp_path):
@@ -30,21 +31,23 @@ def test_scaffold_config_dir_does_not_overwrite_existing_files(tmp_path):
 
 
 def test_check_missing_credentials_reports_absent_keys(tmp_path, monkeypatch):
-    monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     credentials_path = tmp_path / "credentials.env"
     credentials_path.write_text("")
 
     missing = check_missing_credentials(credentials_path)
 
-    assert set(missing) == {"YOUTUBE_API_KEY", "LLM_API_KEY"}
+    assert set(missing) == {"YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY"}
 
 
 def test_check_missing_credentials_excludes_keys_present_in_file(tmp_path, monkeypatch):
-    monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     credentials_path = tmp_path / "credentials.env"
-    credentials_path.write_text("YOUTUBE_API_KEY=abc123\n")
+    credentials_path.write_text("YOUTUBE_OAUTH_CLIENT_ID=abc123\nYOUTUBE_OAUTH_CLIENT_SECRET=xyz789\n")
 
     missing = check_missing_credentials(credentials_path)
 

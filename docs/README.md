@@ -1,12 +1,14 @@
 # sync-master documentation
 
-sync-master watches data sources (currently YouTube playlists), detects new
-items, and uses an AI agent to decide what to do with them — download the
-video, transcribe it, summarize it, sync it to Spotify — based on a
-plain-language policy you write per source.
+sync-master watches YouTube playlists, detects new videos, and deterministically
+runs a fixed set of actions on them — download the video, transcribe it,
+summarize it, sync it to Spotify — based on flag characters encoded directly
+in each playlist's name on YouTube. No per-playlist config file to maintain,
+no LLM deciding what to do: name a playlist `HUMAN-MUSIC-PARTY[!@]` and it's
+tracked; leave the brackets off and it's ignored.
 
 - [Architecture](architecture.md) — how the pieces fit together and why
-- [Setup](setup.md) — installing, bootstrapping, credentials, cron
-- [Configuration](configuration.md) — source policy files, `llm.yaml`, Spotify overrides
-- [Actions](actions.md) — what each action does and how to author policy text for it
+- [Setup](setup.md) — installing, bootstrapping, YouTube/Spotify OAuth, cron
+- [Configuration](configuration.md) — the playlist naming scheme, `output_base_dir`, `llm.yaml`, Spotify overrides
+- [Actions](actions.md) — what each of the four actions (`download`, `transcript`, `summarize`, `spotify_sync`) does
 - [Development](development.md) — running tests, project layout, dry-run mode
