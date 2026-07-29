@@ -22,6 +22,7 @@ def perform_run(
     fetch_items_fn=fetch_playlist_items,
     youtube_client_factory=build_oauth_client,
     action_runner=run_actions_for_video,
+    run_log: list | None = None,
 ) -> dict:
     from dotenv import load_dotenv
 
@@ -63,6 +64,7 @@ def perform_run(
             if parsed is None:
                 continue
 
+            call_log: list = []
             action_runner(
                 action_names=parsed.actions,
                 video_id=video_id,
@@ -72,7 +74,19 @@ def perform_run(
                 video_title=video["title"],
                 spotify_playlist_name=parsed.leaf_name,
                 spotify_overrides=overrides,
+                call_log=call_log,
             )
+
+            if run_log is not None:
+                run_log.append(
+                    {
+                        "video_id": video_id,
+                        "title": video["title"],
+                        "folder_path": str(parsed.folder_path),
+                        "actions": parsed.actions,
+                        "call_log": call_log,
+                    }
+                )
 
         save_state(state_path, state)
 

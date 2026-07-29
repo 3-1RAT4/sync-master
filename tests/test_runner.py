@@ -59,6 +59,40 @@ def test_perform_run_adds_newly_fetched_videos_from_flagged_playlist(tmp_path):
     assert str(calls[0]["output_dir"]).endswith("output/HUMAN/MUSIC/PARTY/v1")
 
 
+def test_perform_run_appends_summary_entry_to_run_log(tmp_path):
+    _write_settings(tmp_path)
+
+    def fake_fetch_playlists(client):
+        return [PlaylistInfo(playlist_id="PL123", title="HUMAN-MUSIC-PARTY[!@]")]
+
+    def fake_fetch_items(playlist_id, youtube_client=None):
+        return [VideoItem(video_id="v1", title="Ep 1", published_at="2026-01-01", playlist_id=playlist_id)]
+
+    def fake_action_runner(**kwargs):
+        kwargs["call_log"].append({"tool": "download", "video_id": "v1"})
+
+    run_log = []
+    perform_run(
+        tmp_path,
+        dry_run=True,
+        fetch_playlists_fn=fake_fetch_playlists,
+        fetch_items_fn=fake_fetch_items,
+        youtube_client_factory=lambda: "fake-client",
+        action_runner=fake_action_runner,
+        run_log=run_log,
+    )
+
+    assert run_log == [
+        {
+            "video_id": "v1",
+            "title": "Ep 1",
+            "folder_path": "HUMAN/MUSIC/PARTY",
+            "actions": ["download", "spotify_sync"],
+            "call_log": [{"tool": "download", "video_id": "v1"}],
+        }
+    ]
+
+
 def test_perform_run_skips_videos_with_no_failed_actions_and_already_processed(tmp_path):
     _write_settings(tmp_path)
     (tmp_path / "state.json").write_text(

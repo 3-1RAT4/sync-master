@@ -14,11 +14,21 @@ CONFIG_DIR = Path.home() / ".config" / "sync-master"
 @app.command()
 def run(dry_run: bool = False) -> None:
     """Discover flagged playlists, diff state, and dispatch actions for pending videos."""
+    run_log: list = []
     try:
-        perform_run(CONFIG_DIR, dry_run=dry_run)
+        perform_run(CONFIG_DIR, dry_run=dry_run, run_log=run_log)
     except LockHeldError:
         typer.echo("Another sync-master run is already in progress. Skipping.")
         raise typer.Exit(code=1)
+
+    if not run_log:
+        typer.echo("No new or pending videos to process.")
+        return
+
+    for entry in run_log:
+        typer.echo(f"{entry['title']} [{entry['folder_path']}] -> {', '.join(entry['actions'])}")
+        for call in entry["call_log"]:
+            typer.echo(f"    {call}")
 
 
 @app.command()
