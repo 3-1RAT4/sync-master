@@ -1,7 +1,13 @@
 import shutil
 from pathlib import Path
 
-REQUIRED_CREDENTIAL_KEYS = ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY"]
+REQUIRED_CREDENTIAL_KEYS = [
+    "YOUTUBE_OAUTH_CLIENT_ID",
+    "YOUTUBE_OAUTH_CLIENT_SECRET",
+    "LLM_API_KEY",
+    "SPOTIFY_CLIENT_ID",
+    "SPOTIFY_CLIENT_SECRET",
+]
 REQUIRED_EXTERNAL_TOOLS = ["yt-dlp", "ffmpeg"]
 
 CREDENTIALS_TEMPLATE = """# Fill in the values below
@@ -12,9 +18,11 @@ YOUTUBE_OAUTH_CLIENT_SECRET=
 # Obtained automatically by `sync-master youtube-login` - don't fill in by hand
 YOUTUBE_OAUTH_REFRESH_TOKEN=
 LLM_API_KEY=
+# Spotify app (Developer Dashboard) - the redirect URI below must also be
+# added to the app's settings there, exactly as written
 SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
-SPOTIFY_REFRESH_TOKEN=
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
 # Optional: only needed for speaker diarization (the "diarization" extra)
 HUGGINGFACE_TOKEN=
 """
@@ -82,7 +90,9 @@ def run_bootstrap(config_dir: Path) -> None:
     )
     typer.echo(
         "For Spotify playlist sync, run `sync-master spotify-login` to complete "
-        "the one-time OAuth authorization (requires playlist-modify scope)."
+        "the one-time OAuth authorization (requires playlist-modify scope; make "
+        "sure SPOTIFY_REDIRECT_URI is also registered in your Spotify app's "
+        "dashboard settings)."
     )
 
     typer.echo("Add this line to your crontab to run sync-master automatically:")

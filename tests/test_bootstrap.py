@@ -31,23 +31,32 @@ def test_scaffold_config_dir_does_not_overwrite_existing_files(tmp_path):
 
 
 def test_check_missing_credentials_reports_absent_keys(tmp_path, monkeypatch):
-    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_ID", raising=False)
-    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    for key in ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY",
+                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"]:
+        monkeypatch.delenv(key, raising=False)
     credentials_path = tmp_path / "credentials.env"
     credentials_path.write_text("")
 
     missing = check_missing_credentials(credentials_path)
 
-    assert set(missing) == {"YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY"}
+    assert set(missing) == {
+        "YOUTUBE_OAUTH_CLIENT_ID",
+        "YOUTUBE_OAUTH_CLIENT_SECRET",
+        "LLM_API_KEY",
+        "SPOTIFY_CLIENT_ID",
+        "SPOTIFY_CLIENT_SECRET",
+    }
 
 
 def test_check_missing_credentials_excludes_keys_present_in_file(tmp_path, monkeypatch):
-    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_ID", raising=False)
-    monkeypatch.delenv("YOUTUBE_OAUTH_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    for key in ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY",
+                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"]:
+        monkeypatch.delenv(key, raising=False)
     credentials_path = tmp_path / "credentials.env"
-    credentials_path.write_text("YOUTUBE_OAUTH_CLIENT_ID=abc123\nYOUTUBE_OAUTH_CLIENT_SECRET=xyz789\n")
+    credentials_path.write_text(
+        "YOUTUBE_OAUTH_CLIENT_ID=abc123\nYOUTUBE_OAUTH_CLIENT_SECRET=xyz789\n"
+        "SPOTIFY_CLIENT_ID=abc123\nSPOTIFY_CLIENT_SECRET=xyz789\n"
+    )
 
     missing = check_missing_credentials(credentials_path)
 

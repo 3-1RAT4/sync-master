@@ -1,8 +1,9 @@
 def _default_client():
     import spotipy
-    from spotipy.oauth2 import SpotifyOAuth
 
-    return spotipy.Spotify(auth_manager=SpotifyOAuth())
+    from sync_master.spotify_auth import build_oauth_manager
+
+    return spotipy.Spotify(auth_manager=build_oauth_manager())
 
 
 def search_track(query: str, spotify_client=None) -> str | None:

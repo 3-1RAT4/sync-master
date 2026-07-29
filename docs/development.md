@@ -12,7 +12,8 @@ sync-master/
 │   ├── playlist_naming.py       # parse_playlist_name: folder path + action flags from a title
 │   ├── state.py                 # state.json load/save/atomic-write/lock
 │   ├── bootstrap.py             # config scaffolding, credential/tool checks
-│   ├── youtube_auth.py          # OAuth client builder + one-time login flow
+│   ├── youtube_auth.py          # YouTube OAuth client builder + one-time login flow
+│   ├── spotify_auth.py          # Spotify OAuth manager builder (stable cache path)
 │   ├── sources/youtube.py       # fetch_my_playlists, fetch_playlist_items, diff
 │   ├── tools/                   # download, transcript, diarize, naming, summarize, spotify_*
 │   └── agent/orchestrator.py    # make_action_tools + run_actions_for_video (deterministic dispatch)

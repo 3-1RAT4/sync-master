@@ -15,13 +15,14 @@ class TranscriptResult:
 
 
 def _default_fetch_captions(video_id: str) -> str:
-    from youtube_transcript_api import NoTranscriptFound, TranscriptsDisabled, YouTubeTranscriptApi
+    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import CouldNotRetrieveTranscript
 
     try:
-        segments = YouTubeTranscriptApi.get_transcript(video_id)
-    except (NoTranscriptFound, TranscriptsDisabled) as exc:
+        fetched = YouTubeTranscriptApi().fetch(video_id)
+    except CouldNotRetrieveTranscript as exc:
         raise NoCaptionsAvailable(video_id) from exc
-    return " ".join(segment["text"] for segment in segments)
+    return " ".join(snippet.text for snippet in fetched)
 
 
 def _default_transcribe_audio(video_id: str, output_dir: Path, title: str | None) -> str:

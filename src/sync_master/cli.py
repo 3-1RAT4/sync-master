@@ -63,18 +63,22 @@ def youtube_login() -> None:
 
 @app.command()
 def spotify_login() -> None:
-    """Run the one-time Spotify OAuth flow (opens a browser) and save the refresh token."""
-    from dotenv import load_dotenv, set_key
-    from spotipy.oauth2 import SpotifyOAuth
+    """Run the one-time Spotify OAuth flow (opens a browser) and cache the token."""
+    from dotenv import load_dotenv
+
+    from sync_master.spotify_auth import CACHE_PATH, build_oauth_manager
 
     credentials_path = CONFIG_DIR / "credentials.env"
     load_dotenv(credentials_path)
 
-    auth_manager = SpotifyOAuth(scope="playlist-modify-public playlist-modify-private")
-    token_info = auth_manager.get_access_token(as_dict=True)
+    if not os.environ.get("SPOTIFY_CLIENT_ID") or not os.environ.get("SPOTIFY_CLIENT_SECRET"):
+        typer.echo("Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in credentials.env first.")
+        raise typer.Exit(code=1)
 
-    set_key(str(credentials_path), "SPOTIFY_REFRESH_TOKEN", token_info["refresh_token"])
-    typer.echo(f"Saved Spotify refresh token to {credentials_path}")
+    auth_manager = build_oauth_manager()
+    auth_manager.get_access_token(as_dict=True)
+
+    typer.echo(f"Spotify authorization cached at {CACHE_PATH}")
 
 
 if __name__ == "__main__":

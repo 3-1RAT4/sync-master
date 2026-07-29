@@ -75,6 +75,7 @@ Spotify playlist name), actions `[download, spotify_sync]`.
 | State | `src/sync_master/state.py` | Load/save `state.json` (atomic write via temp file + rename), lock file to prevent overlapping runs |
 | YouTube source | `src/sync_master/sources/youtube.py` | `fetch_my_playlists` (OAuth, lists every playlist on the account) and `fetch_playlist_items` (fetches a playlist's videos), plus diffing against known state |
 | YouTube auth | `src/sync_master/youtube_auth.py` | Builds the OAuth-authenticated client from a stored refresh token; the one-time login flow used by `sync-master youtube-login` |
+| Spotify auth | `src/sync_master/spotify_auth.py` | Builds the `SpotifyOAuth` manager from `SPOTIFY_CLIENT_ID`/`_SECRET`/`_REDIRECT_URI`, with a stable cache path (`~/.config/sync-master/.spotify_cache`) so the token survives across separate CLI invocations (important for cron) |
 | Naming | `src/sync_master/playlist_naming.py` | `parse_playlist_name` — the folder-path + action-flag parser |
 | Config | `src/sync_master/config.py` | Parse `llm.yaml`, `settings.yaml` (`output_base_dir`), `spotify_overrides.json` |
 | Tools | `src/sync_master/tools/*.py` | `download` (yt-dlp), `transcript` (YouTube captions → Whisper fallback), `diarize` (pyannote speaker labeling), `naming` (title → filename), `summarize` (LangChain), `spotify_search`, `spotify_playlist` (including find-or-create) |

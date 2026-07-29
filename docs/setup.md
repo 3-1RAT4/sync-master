@@ -8,7 +8,9 @@
   enabled — needed to list and fetch *your own* playlists, including private
   ones, which a plain API key can't do. See [Google Cloud Console](https://console.cloud.google.com/) →
   APIs & Services → Credentials → Create OAuth client ID → Desktop app.
-- A Spotify app (Client ID + Secret) with the redirect URI configured for OAuth
+- A Spotify app (Client ID + Secret, from the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard))
+  with a redirect URI registered — `http://127.0.0.1:8080/callback` unless you
+  override it
 - An API key for your chosen LLM provider (DeepSeek by default; any
   OpenAI-compatible or LangChain-supported provider works) — used only by
   the `summarize` action
@@ -78,7 +80,7 @@ YOUTUBE_OAUTH_REFRESH_TOKEN=
 LLM_API_KEY=
 SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
-SPOTIFY_REFRESH_TOKEN=
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
 # Optional: only needed for speaker diarization (the "diarization" extra)
 HUGGINGFACE_TOKEN=
 ```
@@ -95,7 +97,9 @@ This opens a browser for the one-time OAuth approval (scope:
 `youtube.readonly`) and writes the resulting refresh token into
 `credentials.env`.
 
-Similarly, `SPOTIFY_REFRESH_TOKEN` is obtained by running:
+Similarly, once `SPOTIFY_CLIENT_ID`/`_SECRET` are filled in (and
+`SPOTIFY_REDIRECT_URI` is registered in your Spotify app's dashboard exactly
+as written in `credentials.env`), run:
 
 ```bash
 .venv/bin/sync-master spotify-login
@@ -104,7 +108,10 @@ Similarly, `SPOTIFY_REFRESH_TOKEN` is obtained by running:
 This opens a browser for the one-time Spotify OAuth approval (scopes:
 `playlist-modify-public playlist-modify-private`, needed to add tracks to
 *your* playlists — an app-level client ID/secret alone isn't sufficient for
-that) and writes the resulting refresh token into `credentials.env`.
+that). Unlike the YouTube flow, the resulting token is **not** written into
+`credentials.env` — `spotipy` caches it itself at
+`~/.config/sync-master/.spotify_cache`, and `sync-master run` reads from
+that cache automatically afterward.
 
 ## Set your output location
 
