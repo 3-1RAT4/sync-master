@@ -5,9 +5,14 @@ from pathlib import Path
 def _default_llm():
     from langchain_openai import ChatOpenAI
 
+    from sync_master.config import load_llm_config
+
+    llm_config_path = Path.home() / ".config" / "sync-master" / "llm.yaml"
+    llm_config = load_llm_config(llm_config_path)
+
     return ChatOpenAI(
-        model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
-        base_url=os.environ.get("LLM_BASE_URL"),
+        model=llm_config["model"],
+        base_url=llm_config.get("base_url"),
         api_key=os.environ.get("LLM_API_KEY"),
     )
 
