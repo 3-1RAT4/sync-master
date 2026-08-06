@@ -49,7 +49,10 @@ def test_format_as_conversation_groups_consecutive_same_speaker_segments():
 
     text = format_as_conversation(whisper_segments, speaker_segments)
 
-    assert text == ("SPEAKER_00: Hello there. How are you?\n\nSPEAKER_01: I'm doing well.")
+    assert text == (
+        "[00:00:00] SPEAKER_00: Hello there. How are you?\n\n"
+        "[00:00:04] SPEAKER_01: I'm doing well."
+    )
 
 
 def test_format_as_conversation_assigns_closest_speaker_when_no_overlap():
@@ -61,7 +64,7 @@ def test_format_as_conversation_assigns_closest_speaker_when_no_overlap():
 
     text = format_as_conversation(whisper_segments, speaker_segments)
 
-    assert text == "SPEAKER_01: Later text."
+    assert text == "[00:00:10] SPEAKER_01: Later text."
 
 
 def test_format_as_conversation_returns_unknown_speaker_when_no_segments():
@@ -69,4 +72,12 @@ def test_format_as_conversation_returns_unknown_speaker_when_no_segments():
 
     text = format_as_conversation(whisper_segments, [])
 
-    assert text == "UNKNOWN: Hello."
+    assert text == "[00:00:00] UNKNOWN: Hello."
+
+
+def test_format_as_conversation_formats_timestamp_past_one_hour():
+    whisper_segments = [{"start": 3725.0, "end": 3726.0, "text": " One hour and change."}]
+
+    text = format_as_conversation(whisper_segments, [])
+
+    assert text == "[01:02:05] UNKNOWN: One hour and change."

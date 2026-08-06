@@ -32,8 +32,11 @@ pulls in `torch` and is a large install, so it's an optional extra:
 
 Skip it if every playlist you track has YouTube-provided captions.
 
-Speaker diarization (labeling *who* said what in the Whisper fallback's
-transcript) needs a second, separate extra:
+Speaker diarization (labeling *who* said what) needs a second, separate
+extra — and unlike Whisper, it's effectively **required** for any playlist
+with `transcript` flagged, not optional: diarization now runs on every
+transcript, not just the Whisper-fallback ones (see
+[Actions](actions.md#speaker-diarization) for why):
 
 ```bash
 .venv/bin/pip install -e ".[diarization]"
@@ -56,8 +59,9 @@ Then add the token to `credentials.env`:
 HUGGINGFACE_TOKEN=
 ```
 
-If you skip this extra, the Whisper fallback still works — you just get a
-single unlabeled block of text instead of `SPEAKER_00:` / `SPEAKER_01:` turns.
+If you skip this extra, every `transcript` action will fail (it always
+attempts diarization) — only skip it if none of your flagged playlists use
+`#`.
 
 ## Bootstrap
 

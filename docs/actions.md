@@ -18,46 +18,67 @@ if no title is available for some reason.
 
 ## `transcript`
 
-Tries YouTube's own captions first (`youtube-transcript-api`). If none are
-available, falls back to downloading audio and transcribing it with Whisper
-(`src/sync_master/tools/transcript.py`). Writes into the **same** per-video
+Two independent things happen here, always, regardless of each other:
+
+1. **Text**: tries YouTube's own captions first (`youtube-transcript-api`,
+   fast/free). If none are available, falls back to downloading audio and
+   transcribing it with Whisper. `get_transcript`'s returned `source` field
+   (`captions` or `whisper`) records which one was used — though note this
+   isn't currently persisted into `state.json`, since the orchestrator's
+   `transcript` tool discards that part of the result; `state.json` only
+   ever records `{"status": "done", ...}` for this action.
+2. **Speakers**: downloads audio (if not already downloaded — see below) and
+   runs diarization, **every time**, whether or not captions succeeded for
+   the text. This means every `transcript` action needs an audio download,
+   even on the fast captions path — a deliberate tradeoff (see
+   [Speaker diarization](#speaker-diarization) below) to always get speaker
+   labels rather than only on the Whisper fallback.
+
+These two are merged by timestamp into one output:
+`[HH:MM:SS] SPEAKER_00: text...` turns, written into the **same** per-video
 folder as `download` — `<output_dir>/<video_id>/<sanitized_title>_TRANSCRIPT.md`
 (falls back to the generic `transcript.md` if no title is available).
+Consecutive segments from the same speaker are merged into one turn, each
+one starting with the timestamp of its first segment.
 
-`get_transcript` returns which source (`captions` or `whisper`) was used, but
-note this isn't currently persisted into `state.json` — the orchestrator's
-`transcript` tool discards that part of the result, so `state.json` only
-ever records `{"status": "done", ...}` for this action, not which path was
-taken.
+The audio download used for diarization (and for the Whisper fallback, when
+needed) reuses whatever `download` already fetched, if present —
+`download_video` skips re-fetching when a matching file already exists in
+the video's folder, whether that's because the `download` action ran first
+or because `transcript` itself already fetched it earlier. This matters
+because every extra request to YouTube is a chance to trip anti-bot
+detection (`Sign in to confirm you're not a bot` from yt-dlp) — see
+[Development](development.md) for what to do if you hit that.
 
 The Whisper fallback needs the optional `whisper` extra installed — see
 [Setup](setup.md#install).
 
-### Speaker diarization (Whisper fallback only)
+### Speaker diarization
 
-When the Whisper fallback runs, the transcript isn't just a wall of text —
-it's formatted as labeled conversation turns (`SPEAKER_00: ...`,
-`SPEAKER_01: ...`) using `pyannote.audio` for diarization
-(`src/sync_master/tools/diarize.py`), aligned against Whisper's own segment
-timestamps. Consecutive segments from the same speaker are merged into one
-turn.
-
-This only applies to the Whisper path — captions from YouTube are plain
-text with no speaker labels, since diarizing would mean downloading and
-processing audio even when captions already succeeded for free.
+Diarization (`pyannote.audio`, `src/sync_master/tools/diarize.py`) runs
+unconditionally for every video with `transcript` flagged — not just as a
+Whisper-fallback bonus. The tradeoff: captions alone are fast and don't need
+a video download at all, but YouTube's caption data has no speaker
+information, so getting speaker labels *always* means downloading and
+processing audio regardless of whether captions succeeded for the text
+itself. This was a deliberate choice to always have speaker labels, at the
+cost of losing the "free" fast path for videos where captions were
+available.
 
 Needs the optional `diarization` extra (`pyannote.audio`) installed, **plus**
 a Hugging Face account: the pipeline (`pyannote/speaker-diarization-community-1`)
 is gated, so you must accept its terms on Hugging Face and set
 `HUGGINGFACE_TOKEN` in `credentials.env` — see [Setup](setup.md#install).
+Unlike the original design, this extra is now effectively **required** for
+`transcript` to work at all, not just for speaker labels — without it,
+every `transcript` action fails when it tries to diarize.
 
 Implementation note: `diarize_audio` (`src/sync_master/tools/diarize.py`)
 reads `DiarizeOutput.exclusive_speaker_diarization`, not
 `.speaker_diarization` — the "exclusive" variant has no overlapping speech
 turns, which is what the pipeline's own docs recommend for aligning against
-a separate transcription (our Whisper segments). Using the non-exclusive
-variant would make some Whisper segments ambiguous between two overlapping
-speakers.
+a separate transcription. Using the non-exclusive variant would make some
+segments ambiguous between two overlapping speakers.
 
 ## `summarize`
 

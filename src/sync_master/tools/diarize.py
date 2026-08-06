@@ -57,16 +57,25 @@ def _best_speaker(w_start: float, w_end: float, speaker_segments: list[SpeakerSe
     return best.speaker
 
 
-def format_as_conversation(whisper_segments: list[dict], speaker_segments: list[SpeakerSegment]) -> str:
-    turns: list[list[str]] = []
+def _format_timestamp(seconds: float) -> str:
+    total_seconds = int(seconds)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
-    for segment in whisper_segments:
+
+def format_as_conversation(segments: list[dict], speaker_segments: list[SpeakerSegment]) -> str:
+    turns: list[list] = []
+
+    for segment in segments:
         speaker = _best_speaker(segment["start"], segment["end"], speaker_segments)
         text = segment["text"].strip()
 
-        if turns and turns[-1][0] == speaker:
-            turns[-1][1] = f"{turns[-1][1]} {text}"
+        if turns and turns[-1][1] == speaker:
+            turns[-1][2] = f"{turns[-1][2]} {text}"
         else:
-            turns.append([speaker, text])
+            turns.append([segment["start"], speaker, text])
 
-    return "\n\n".join(f"{speaker}: {text}" for speaker, text in turns)
+    return "\n\n".join(
+        f"[{_format_timestamp(start)}] {speaker}: {text}" for start, speaker, text in turns
+    )
