@@ -8,11 +8,13 @@ from sync_master.state import acquire_lock, load_state, save_state
 from sync_master.youtube_auth import build_oauth_client
 
 
-def _needs_processing(video: dict) -> bool:
+def _needs_processing(video: dict, required_actions: list[str]) -> bool:
     actions = video["actions"]
-    if not actions:
-        return True
-    return any(action.get("status") == "failed" for action in actions.values())
+    for name in required_actions:
+        status = actions.get(name, {}).get("status")
+        if status not in ("done", "no_match"):
+            return True
+    return False
 
 
 def perform_run(
@@ -57,11 +59,11 @@ def perform_run(
                 }
 
         for video_id, video in state["videos"].items():
-            if not _needs_processing(video):
-                continue
-
             parsed = parsed_by_playlist_id.get(video["playlist_id"])
             if parsed is None:
+                continue
+
+            if not _needs_processing(video, parsed.actions):
                 continue
 
             call_log: list = []

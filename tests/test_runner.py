@@ -120,6 +120,61 @@ def test_perform_run_skips_videos_with_no_failed_actions_and_already_processed(t
     assert calls == []
 
 
+def test_perform_run_reprocesses_video_missing_a_currently_required_action(tmp_path):
+    _write_settings(tmp_path)
+    (tmp_path / "state.json").write_text(
+        '{"videos": {"v1": {"playlist_id": "PL123", "title": "Ep 1", '
+        '"published_at": "2026-01-01", "actions": {"download": {"status": "done"}}}}}'
+    )
+
+    def fake_fetch_playlists(client):
+        return [PlaylistInfo(playlist_id="PL123", title="HUMAN-MUSIC-PARTY[!@]")]
+
+    def fake_fetch_items(playlist_id, youtube_client=None):
+        return [VideoItem(video_id="v1", title="Ep 1", published_at="2026-01-01", playlist_id=playlist_id)]
+
+    calls = []
+
+    perform_run(
+        tmp_path,
+        dry_run=False,
+        fetch_playlists_fn=fake_fetch_playlists,
+        fetch_items_fn=fake_fetch_items,
+        youtube_client_factory=lambda: "fake-client",
+        action_runner=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["action_names"] == ["download", "spotify_sync"]
+
+
+def test_perform_run_skips_video_with_no_match_status_for_required_action(tmp_path):
+    _write_settings(tmp_path)
+    (tmp_path / "state.json").write_text(
+        '{"videos": {"v1": {"playlist_id": "PL123", "title": "Ep 1", '
+        '"published_at": "2026-01-01", "actions": {"spotify_sync": {"status": "no_match"}}}}}'
+    )
+
+    def fake_fetch_playlists(client):
+        return [PlaylistInfo(playlist_id="PL123", title="HUMAN-MUSIC-PARTY[@]")]
+
+    def fake_fetch_items(playlist_id, youtube_client=None):
+        return [VideoItem(video_id="v1", title="Ep 1", published_at="2026-01-01", playlist_id=playlist_id)]
+
+    calls = []
+
+    perform_run(
+        tmp_path,
+        dry_run=False,
+        fetch_playlists_fn=fake_fetch_playlists,
+        fetch_items_fn=fake_fetch_items,
+        youtube_client_factory=lambda: "fake-client",
+        action_runner=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert calls == []
+
+
 def test_perform_run_retries_videos_with_failed_actions(tmp_path):
     _write_settings(tmp_path)
     (tmp_path / "state.json").write_text(
