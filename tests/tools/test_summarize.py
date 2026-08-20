@@ -1,4 +1,4 @@
-from sync_master.tools.summarize import summarize
+from sync_master.tools.summarize import SummaryResult, summarize
 
 
 class FakeResponse:
@@ -16,26 +16,29 @@ class FakeLLM:
         return FakeResponse(self.response_text)
 
 
-def test_summarize_returns_llm_response_content(tmp_path):
+def test_summarize_returns_summary_result_with_content():
     llm = FakeLLM("This is the summary.")
 
-    result = summarize("transcript text", "Summarize in 3 paragraphs.", tmp_path, llm=llm)
+    result = summarize("transcript text", "Summarize in 3 paragraphs.", llm=llm)
 
-    assert result == "This is the summary."
+    assert result == SummaryResult(content="This is the summary.", llm_provider="unknown", llm_model="unknown")
 
 
-def test_summarize_includes_instructions_and_transcript_in_prompt(tmp_path):
+def test_summarize_includes_instructions_and_transcript_in_prompt():
     llm = FakeLLM("summary")
 
-    summarize("the transcript body", "custom instructions", tmp_path, llm=llm)
+    summarize("the transcript body", "custom instructions", llm=llm)
 
     assert "custom instructions" in llm.received_prompt
     assert "the transcript body" in llm.received_prompt
 
 
-def test_summarize_writes_summary_markdown_file(tmp_path):
-    llm = FakeLLM("written summary")
+def test_summarize_passes_through_given_llm_provider_and_model():
+    llm = FakeLLM("summary")
 
-    summarize("transcript", "instructions", tmp_path, llm=llm)
+    result = summarize(
+        "transcript", "instructions", llm=llm, llm_provider="deepseek", llm_model="deepseek-chat"
+    )
 
-    assert (tmp_path / "summary.md").read_text() == "written summary"
+    assert result.llm_provider == "deepseek"
+    assert result.llm_model == "deepseek-chat"

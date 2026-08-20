@@ -14,6 +14,9 @@
 - An API key for your chosen LLM provider (DeepSeek by default; any
   OpenAI-compatible or LangChain-supported provider works) — used only by
   the `summarize` action
+- A Postgres database (16+ recommended) — a local dev instance is provided
+  via `docker-compose.yml` (`docker compose up -d postgres`), or point at
+  any existing server
 
 ## Install
 
@@ -63,17 +66,29 @@ If you skip this extra, every `transcript` action will fail (it always
 attempts diarization) — only skip it if none of your flagged playlists use
 `#`.
 
+## Set up the database
+
+```bash
+docker compose up -d postgres    # or point DATABASE_URL at an existing server
+.venv/bin/alembic upgrade head
+```
+
+The default `docker-compose.yml` creates a `mydb` database with user
+`sync_master` / password `changeme` — matching the `DATABASE_URL` bootstrap
+scaffolds into `credentials.env` below. Change both together if you use
+different credentials.
+
 ## Bootstrap
 
 ```bash
 .venv/bin/sync-master bootstrap
 ```
 
-This scaffolds `~/.config/sync-master/` (creating `logs/`, `state.json`,
+This scaffolds `~/.config/sync-master/` (creating `logs/`,
 `spotify_overrides.json`, `credentials.env`, `llm.yaml`, and `settings.yaml`
 templates — it never overwrites files that already exist), checks whether
-`yt-dlp` and `ffmpeg` are on your `PATH`, and reports which required
-credentials are still missing.
+`yt-dlp` and `ffmpeg` are on your `PATH`, checks that `DATABASE_URL` is
+reachable, and reports which required credentials are still missing.
 
 Fill in `~/.config/sync-master/credentials.env`:
 
@@ -87,6 +102,7 @@ SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
 # Optional: only needed for speaker diarization (the "diarization" extra)
 HUGGINGFACE_TOKEN=
+DATABASE_URL=postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb
 ```
 
 `YOUTUBE_OAUTH_CLIENT_ID`/`_SECRET` come from the Google Cloud OAuth Client
@@ -117,12 +133,14 @@ that). Unlike the YouTube flow, the resulting token is **not** written into
 `~/.config/sync-master/.spotify_cache`, and `sync-master run` reads from
 that cache automatically afterward.
 
-## Set your output location
+## Set your scratch directory
 
-Edit `~/.config/sync-master/settings.yaml`:
+Durable output lives in Postgres (see [Configuration](configuration.md#database-databaseurl));
+`output_base_dir` is just scratch space for external tools. Edit
+`~/.config/sync-master/settings.yaml`:
 
 ```yaml
-output_base_dir: /home/you/sync-master-output
+output_base_dir: /home/you/sync-master-scratch
 ```
 
 ## Name your playlists
@@ -158,3 +176,26 @@ Add it yourself with `crontab -e`:
 ```
 
 sync-master does not modify your crontab for you.
+
+## Migrating an existing install
+
+If you're upgrading a pre-Postgres install (one with an existing
+`~/.config/sync-master/state.json` and a populated `output_base_dir`), run
+this once after setting up the database and filling in `DATABASE_URL`:
+
+```bash
+.venv/bin/sync-master migrate-legacy
+```
+
+This reads the old `state.json` and output directory tree and inserts the
+equivalent rows into Postgres (playlists, videos, action statuses, video
+files, transcripts, summaries). It's safe to re-run. A few things can't be
+recovered from the old format, since it never recorded them: which source
+(`captions` or `whisper`) each transcript came from (stored as `unknown`),
+per-speaker diarization segments (left empty), and the resolved Spotify
+track/playlist for a `spotify_sync` action that already succeeded (only its
+`done`/`no_match`/`failed` status carries over into `video_actions`, so it
+won't be needlessly redone — the `spotify_syncs` table itself just stays
+empty for those). All of this is captured correctly going forward. Once
+you've confirmed the import looks right, the old `state.json` and
+`output_base_dir` are no longer read by sync-master and can be deleted.

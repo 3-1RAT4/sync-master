@@ -67,6 +67,5 @@ def fetch_playlist_items(playlist_id: str, api_key: str | None = None, youtube_c
     return items
 
 
-def diff_new_videos(state: dict, fetched: list[VideoItem]) -> list[VideoItem]:
-    known_ids = state.get("videos", {}).keys()
-    return [item for item in fetched if item.video_id not in known_ids]
+def diff_new_videos(known_video_ids: set[str], fetched: list[VideoItem]) -> list[VideoItem]:
+    return [item for item in fetched if item.video_id not in known_video_ids]

@@ -43,16 +43,58 @@ local file to update.
 
 ## `output_base_dir` (`settings.yaml`)
 
-The one thing that isn't derived from the playlist name is where output
-goes on disk:
+Durable output (downloaded video, transcript, summary, Spotify sync record)
+lives in Postgres now — see [Database](#database-databaseurl) below.
+`output_base_dir` is just **scratch space**: a directory external tools
+(yt-dlp, ffmpeg, Whisper, pyannote) can write temporary files into while an
+action runs. Nothing under it is authoritative; it's safe to delete at any
+time (sync-master will just re-download/re-process on the next run if
+needed).
 
 ```yaml
-output_base_dir: /home/you/sync-master-output
+output_base_dir: /home/you/sync-master-scratch
 ```
 
-Each video's files land at `<output_base_dir>/<folder_path>/<video_id>/` —
-e.g. `HUMAN-MUSIC-PARTY[!@]` puts video `abc123` at
-`<output_base_dir>/HUMAN/MUSIC/PARTY/abc123/`.
+Each video's scratch files land at
+`<output_base_dir>/<folder_path>/<video_id>/` — e.g. `HUMAN-MUSIC-PARTY[!@]`
+uses `<output_base_dir>/HUMAN/MUSIC/PARTY/abc123/` for video `abc123` while
+processing it.
+
+## Database (`DATABASE_URL`)
+
+sync-master stores everything durable — playlists, videos, per-action
+status, the downloaded video bytes, transcript text and per-speaker
+segments, summaries, and Spotify sync records — in a Postgres database
+named `mydb` by convention (any name works, it's just what `DATABASE_URL`
+points at).
+
+Set the connection string in `credentials.env`:
+
+```bash
+DATABASE_URL=postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb
+```
+
+A local dev instance is provided via `docker-compose.yml` at the repo root:
+
+```bash
+docker compose up -d postgres
+```
+
+Then apply the schema:
+
+```bash
+.venv/bin/alembic upgrade head
+```
+
+`sync-master bootstrap` checks that `DATABASE_URL` is reachable as part of
+its normal checks. See [Architecture](architecture.md#state-model) for the
+full table schema, and
+[Development](development.md#database) for running tests against Postgres.
+
+If you're moving an existing pre-Postgres install (one that still has a
+`state.json` and populated `output_base_dir`) onto this version, run
+`sync-master migrate-legacy` once to import it — see
+[Setup](setup.md#migrating-an-existing-install).
 
 ## `llm.yaml`
 

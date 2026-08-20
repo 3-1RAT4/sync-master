@@ -3,8 +3,8 @@ from pathlib import Path
 
 import typer
 
+from sync_master.db.repository import LockHeldError
 from sync_master.runner import perform_run
-from sync_master.state import LockHeldError
 
 app = typer.Typer()
 
@@ -59,6 +59,17 @@ def youtube_login() -> None:
 
     set_key(str(credentials_path), "YOUTUBE_OAUTH_REFRESH_TOKEN", refresh_token)
     typer.echo(f"Saved YouTube refresh token to {credentials_path}")
+
+
+@app.command()
+def migrate_legacy() -> None:
+    """One-time import of an existing state.json + output directory into Postgres."""
+    from sync_master.legacy_migration import run_legacy_migration
+
+    counts = run_legacy_migration(CONFIG_DIR)
+    typer.echo("Migrated legacy state into Postgres:")
+    for key, value in counts.items():
+        typer.echo(f"  {key}: {value}")
 
 
 @app.command()

@@ -16,6 +16,9 @@ dependencies = [
     "google-auth-oauthlib>=1.2",
     "spotipy>=2.24",
     "yt-dlp>=2024.8.6",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]

@@ -1,4 +1,5 @@
 from sync_master.bootstrap import (
+    check_database_connection,
     check_external_tools,
     check_missing_credentials,
     crontab_line,
@@ -12,27 +13,28 @@ def test_scaffold_config_dir_creates_expected_structure(tmp_path):
     scaffold_config_dir(config_dir)
 
     assert (config_dir / "logs").is_dir()
-    assert (config_dir / "state.json").exists()
+    assert not (config_dir / "state.json").exists()
     assert (config_dir / "spotify_overrides.json").exists()
     assert (config_dir / "credentials.env").exists()
     assert (config_dir / "llm.yaml").exists()
     assert (config_dir / "settings.yaml").exists()
+    assert "DATABASE_URL=" in (config_dir / "credentials.env").read_text()
     assert not (config_dir / "sources").exists()
 
 
 def test_scaffold_config_dir_does_not_overwrite_existing_files(tmp_path):
     config_dir = tmp_path / "sync-master"
     config_dir.mkdir()
-    (config_dir / "state.json").write_text('{"videos": {"v1": {}}}')
+    (config_dir / "spotify_overrides.json").write_text('{"v1": "spotify:track:abc123"}')
 
     scaffold_config_dir(config_dir)
 
-    assert (config_dir / "state.json").read_text() == '{"videos": {"v1": {}}}'
+    assert (config_dir / "spotify_overrides.json").read_text() == '{"v1": "spotify:track:abc123"}'
 
 
 def test_check_missing_credentials_reports_absent_keys(tmp_path, monkeypatch):
     for key in ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY",
-                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"]:
+                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "DATABASE_URL"]:
         monkeypatch.delenv(key, raising=False)
     credentials_path = tmp_path / "credentials.env"
     credentials_path.write_text("")
@@ -45,22 +47,34 @@ def test_check_missing_credentials_reports_absent_keys(tmp_path, monkeypatch):
         "LLM_API_KEY",
         "SPOTIFY_CLIENT_ID",
         "SPOTIFY_CLIENT_SECRET",
+        "DATABASE_URL",
     }
 
 
 def test_check_missing_credentials_excludes_keys_present_in_file(tmp_path, monkeypatch):
     for key in ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY",
-                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"]:
+                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "DATABASE_URL"]:
         monkeypatch.delenv(key, raising=False)
     credentials_path = tmp_path / "credentials.env"
     credentials_path.write_text(
         "YOUTUBE_OAUTH_CLIENT_ID=abc123\nYOUTUBE_OAUTH_CLIENT_SECRET=xyz789\n"
         "SPOTIFY_CLIENT_ID=abc123\nSPOTIFY_CLIENT_SECRET=xyz789\n"
+        "DATABASE_URL=postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb\n"
     )
 
     missing = check_missing_credentials(credentials_path)
 
     assert missing == ["LLM_API_KEY"]
+
+
+def test_check_database_connection_reports_message_when_url_missing():
+    assert check_database_connection(None) == "DATABASE_URL is not set"
+
+
+def test_check_database_connection_reports_error_for_unreachable_database():
+    error = check_database_connection("postgresql+psycopg2://baduser:badpass@localhost:1/nodb")
+
+    assert error is not None
 
 
 def test_check_external_tools_reports_availability():

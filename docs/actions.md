@@ -10,11 +10,14 @@ not by prose — and they always run in the same fixed canonical order:
 ## `download`
 
 Downloads the best-available-quality video via yt-dlp
-(`src/sync_master/tools/download.py`) into the video's folder:
-`<output_dir>/<video_id>/<sanitized_title>.<ext>`. The filename is the
-video's title with spaces replaced by underscores (`sanitize_filename` in
-`src/sync_master/tools/naming.py`) — falls back to the generic name `video`
-if no title is available for some reason.
+(`src/sync_master/tools/download.py`) into a scratch directory:
+`<output_base_dir>/<folder_path>/<video_id>/<sanitized_title>.<ext>`. The
+filename is the video's title with spaces replaced by underscores
+(`sanitize_filename` in `src/sync_master/tools/naming.py`) — falls back to
+the generic name `video` if no title is available for some reason. The
+orchestrator then reads those bytes back and stores them in the `video_files`
+table (`src/sync_master/db/repository.py::save_video_file`) — the file on
+disk is scratch space after that, not the durable copy.
 
 ## `transcript`
 
@@ -23,30 +26,29 @@ Two independent things happen here, always, regardless of each other:
 1. **Text**: tries YouTube's own captions first (`youtube-transcript-api`,
    fast/free). If none are available, falls back to downloading audio and
    transcribing it with Whisper. `get_transcript`'s returned `source` field
-   (`captions` or `whisper`) records which one was used — though note this
-   isn't currently persisted into `state.json`, since the orchestrator's
-   `transcript` tool discards that part of the result; `state.json` only
-   ever records `{"status": "done", ...}` for this action.
+   (`captions` or `whisper`) is persisted as-is into the `transcripts.source`
+   column (`src/sync_master/db/repository.py::save_transcript`) — unlike the
+   pre-Postgres design, this is no longer thrown away.
 2. **Speakers**: downloads audio (if not already downloaded — see below) and
    runs diarization, **every time**, whether or not captions succeeded for
    the text. This means every `transcript` action needs an audio download,
    even on the fast captions path — a deliberate tradeoff (see
    [Speaker diarization](#speaker-diarization) below) to always get speaker
-   labels rather than only on the Whisper fallback.
+   labels rather than only on the Whisper fallback. The raw per-speaker
+   segments are persisted too, into `transcript_segments` (one row per
+   speaker turn) — also no longer thrown away.
 
 These two are merged by timestamp into one output:
-`[HH:MM:SS] SPEAKER_00: text...` turns, written into the **same** per-video
-folder as `download` — `<output_dir>/<video_id>/<sanitized_title>_TRANSCRIPT.md`
-(falls back to the generic `transcript.md` if no title is available).
-Consecutive segments from the same speaker are merged into one turn, each
-one starting with the timestamp of its first segment.
+`[HH:MM:SS] SPEAKER_00: text...` turns, stored as `transcripts.text`. The
+scratch audio file used to produce it (in the same directory `download`
+uses) is disposable once this action completes.
 
 The audio download used for diarization (and for the Whisper fallback, when
 needed) reuses whatever `download` already fetched, if present —
 `download_video` skips re-fetching when a matching file already exists in
-the video's folder, whether that's because the `download` action ran first
-or because `transcript` itself already fetched it earlier. This matters
-because every extra request to YouTube is a chance to trip anti-bot
+the video's scratch folder, whether that's because the `download` action ran
+first or because `transcript` itself already fetched it earlier. This
+matters because every extra request to YouTube is a chance to trip anti-bot
 detection (`Sign in to confirm you're not a bot` from yt-dlp) — see
 [Development](development.md) for what to do if you hit that.
 
@@ -82,13 +84,14 @@ segments ambiguous between two overlapping speakers.
 
 ## `summarize`
 
-Reads the transcript file written by `transcript` (same title-based naming)
-and calls the configured LLM (`src/sync_master/tools/summarize.py`) with a
-fixed instruction string (`DEFAULT_SUMMARIZE_INSTRUCTIONS` in
-`orchestrator.py` — "summarize concisely, capturing the key points and main
-topics discussed"). There's no per-playlist customization of summary style
-in this design — the `#` flag means "summarize the same way, everywhere."
-Writes `<output_dir>/<video_id>/summary.md`.
+Reads the transcript text back from the `transcripts` table (written by
+`transcript`) and calls the configured LLM
+(`src/sync_master/tools/summarize.py`) with a fixed instruction string
+(`DEFAULT_SUMMARIZE_INSTRUCTIONS` in `orchestrator.py` — "summarize concisely,
+capturing the key points and main topics discussed"). There's no
+per-playlist customization of summary style in this design — the `#` flag
+means "summarize the same way, everywhere." The result, along with which LLM
+provider/model produced it, is stored in the `summaries` table.
 
 Since `#` always expands to `transcript` + `summarize` together (see
 [Configuration](configuration.md#playlist-naming-scheme)), and canonical

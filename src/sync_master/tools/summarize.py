@@ -1,14 +1,24 @@
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 
-def _default_llm():
-    from langchain_openai import ChatOpenAI
+@dataclass(frozen=True)
+class SummaryResult:
+    content: str
+    llm_provider: str
+    llm_model: str
 
+
+def _load_llm_config() -> dict:
     from sync_master.config import load_llm_config
 
     llm_config_path = Path.home() / ".config" / "sync-master" / "llm.yaml"
-    llm_config = load_llm_config(llm_config_path)
+    return load_llm_config(llm_config_path)
+
+
+def _default_llm(llm_config: dict):
+    from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(
         model=llm_config["model"],
@@ -17,14 +27,26 @@ def _default_llm():
     )
 
 
-def summarize(transcript_text: str, instructions: str, output_dir: Path, llm=None) -> str:
-    llm = llm or _default_llm()
+def summarize(
+    transcript_text: str,
+    instructions: str,
+    llm=None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+) -> SummaryResult:
+    if llm is None:
+        llm_config = _load_llm_config()
+        llm = _default_llm(llm_config)
+        llm_provider = llm_config["provider"]
+        llm_model = llm_config["model"]
+
     prompt = f"{instructions}\n\nTranscript:\n{transcript_text}"
 
     response = llm.invoke(prompt)
     text = response.content if hasattr(response, "content") else str(response)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "summary.md").write_text(text)
-
-    return text
+    return SummaryResult(
+        content=text,
+        llm_provider=llm_provider or "unknown",
+        llm_model=llm_model or "unknown",
+    )
