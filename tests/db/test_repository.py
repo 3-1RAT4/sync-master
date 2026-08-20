@@ -7,13 +7,14 @@ from sync_master.tools.diarize import SpeakerSegment
 
 
 def _make_video(session, video_id="v1"):
-    repository.ensure_video_row(session, video_id)
+    return repository.upsert_video(session, source="youtube", external_id=video_id, title="Ep 1")
 
 
 def test_upsert_playlist_is_idempotent_and_updates_on_conflict(db_session):
     repository.upsert_playlist(
         db_session,
-        youtube_playlist_id="PL123",
+        source="youtube",
+        external_id="PL123",
         title="OLD-NAME[!]",
         folder_path=Path("OLD/NAME"),
         leaf_name="NAME",
@@ -21,7 +22,8 @@ def test_upsert_playlist_is_idempotent_and_updates_on_conflict(db_session):
     )
     repository.upsert_playlist(
         db_session,
-        youtube_playlist_id="PL123",
+        source="youtube",
+        external_id="PL123",
         title="NEW-NAME[!@]",
         folder_path=Path("NEW/NAME"),
         leaf_name="NAME",
@@ -29,11 +31,31 @@ def test_upsert_playlist_is_idempotent_and_updates_on_conflict(db_session):
     )
 
     row = db_session.execute(
-        repository.select(repository.Playlist).where(repository.Playlist.youtube_playlist_id == "PL123")
+        repository.select(repository.Playlist).where(repository.Playlist.external_id == "PL123")
     ).scalar_one()
 
     assert row.title == "NEW-NAME[!@]"
     assert row.actions == ["download", "spotify_sync"]
+
+
+def test_upsert_playlist_allows_untracked_playlists_with_null_flag_fields(db_session):
+    repository.upsert_playlist(
+        db_session,
+        source="youtube",
+        external_id="PL999",
+        title="Favoritos",
+        description="A playlist with no recognized flags",
+        item_count=5,
+    )
+
+    row = db_session.execute(
+        repository.select(repository.Playlist).where(repository.Playlist.external_id == "PL999")
+    ).scalar_one()
+
+    assert row.folder_path is None
+    assert row.leaf_name is None
+    assert row.actions is None
+    assert row.item_count == 5
 
 
 def test_load_state_returns_empty_structure_by_default(db_session):
@@ -67,14 +89,28 @@ def test_save_state_overwrites_the_previous_document(db_session):
     assert repository.load_state(db_session) == {"videos": {"v2": {"title": "second"}}}
 
 
-def test_ensure_video_row_is_idempotent(db_session):
-    repository.ensure_video_row(db_session, "v1")
-    repository.ensure_video_row(db_session, "v1")
+def test_upsert_video_is_idempotent_and_updates_on_conflict(db_session):
+    repository.upsert_video(db_session, source="youtube", external_id="v1", title="Old Title")
+    repository.upsert_video(db_session, source="youtube", external_id="v1", title="New Title")
 
     row = db_session.execute(
-        repository.select(repository.Video).where(repository.Video.youtube_video_id == "v1")
+        repository.select(repository.Video).where(repository.Video.external_id == "v1")
     ).scalar_one()
-    assert row.youtube_video_id == "v1"
+    assert row.title == "New Title"
+
+
+def test_upsert_video_links_to_its_playlist(db_session):
+    playlist_pk = repository.upsert_playlist(
+        db_session, source="youtube", external_id="PL123", title="Some Playlist[!]"
+    )
+    video_pk = repository.upsert_video(
+        db_session, source="youtube", external_id="v1", title="Ep 1", playlist_id=playlist_pk
+    )
+
+    row = db_session.execute(
+        repository.select(repository.Video).where(repository.Video.id == video_pk)
+    ).scalar_one()
+    assert row.playlist_id == playlist_pk
 
 
 def test_save_video_file_round_trips_bytes(db_session):
@@ -85,7 +121,7 @@ def test_save_video_file_round_trips_bytes(db_session):
     )
 
     row = db_session.execute(
-        repository.select(repository.VideoFile).where(repository.VideoFile.youtube_video_id == "v1")
+        repository.select(repository.VideoFile).join(repository.Video).where(repository.Video.external_id == "v1")
     ).scalar_one()
 
     assert row.filename == "Ep_1.mp4"
@@ -98,7 +134,9 @@ def test_save_video_file_replacing_content_does_not_leak_the_old_large_object(db
 
     repository.save_video_file(db_session, "v1", filename="a.mp4", content_type="video/mp4", content=b"first")
     old_oid = db_session.execute(
-        repository.select(repository.VideoFile.content_oid).where(repository.VideoFile.youtube_video_id == "v1")
+        repository.select(repository.VideoFile.content_oid)
+        .join(repository.Video)
+        .where(repository.Video.external_id == "v1")
     ).scalar_one()
 
     repository.save_video_file(db_session, "v1", filename="a.mp4", content_type="video/mp4", content=b"second")
@@ -124,7 +162,7 @@ def test_save_transcript_persists_text_source_and_segments(db_session):
     assert repository.get_transcript_text(db_session, "v1") == "[00:00:00] SPEAKER_00: hello"
 
     transcript = db_session.execute(
-        repository.select(repository.Transcript).where(repository.Transcript.youtube_video_id == "v1")
+        repository.select(repository.Transcript).join(repository.Video).where(repository.Video.external_id == "v1")
     ).scalar_one()
     assert transcript.source.value == "captions"
     assert [s.speaker for s in transcript.segments] == ["SPEAKER_00"]
@@ -143,7 +181,7 @@ def test_save_transcript_replaces_segments_on_resave(db_session):
     )
 
     transcript = db_session.execute(
-        repository.select(repository.Transcript).where(repository.Transcript.youtube_video_id == "v1")
+        repository.select(repository.Transcript).join(repository.Video).where(repository.Video.external_id == "v1")
     ).scalar_one()
     assert transcript.text == "second"
     assert [s.speaker for s in transcript.segments] == ["SPEAKER_01"]
@@ -158,7 +196,7 @@ def test_save_summary_round_trips(db_session):
     )
 
     row = db_session.execute(
-        repository.select(repository.Summary).where(repository.Summary.youtube_video_id == "v1")
+        repository.select(repository.Summary).join(repository.Video).where(repository.Video.external_id == "v1")
     ).scalar_one()
     assert row.content == "a summary"
     assert row.llm_model == "deepseek-chat"
@@ -176,10 +214,27 @@ def test_save_spotify_sync_extracts_track_id_and_round_trips(db_session):
     )
 
     row = db_session.execute(
-        repository.select(repository.SpotifySync).where(repository.SpotifySync.youtube_video_id == "v1")
+        repository.select(repository.SpotifySync).join(repository.Video).where(repository.Video.external_id == "v1")
     ).scalar_one()
     assert row.spotify_track_id == "abc123"
     assert row.matched_via.value == "search"
+
+
+def test_get_spotify_playlist_id_returns_none_when_not_cached(db_session):
+    assert repository.get_spotify_playlist_id(db_session, "PARTY") is None
+
+
+def test_save_then_get_spotify_playlist_id_round_trips(db_session):
+    repository.save_spotify_playlist_id(db_session, "PARTY", "spotify:playlist:abc")
+
+    assert repository.get_spotify_playlist_id(db_session, "PARTY") == "spotify:playlist:abc"
+
+
+def test_save_spotify_playlist_id_upserts_on_conflict(db_session):
+    repository.save_spotify_playlist_id(db_session, "PARTY", "spotify:playlist:old")
+    repository.save_spotify_playlist_id(db_session, "PARTY", "spotify:playlist:new")
+
+    assert repository.get_spotify_playlist_id(db_session, "PARTY") == "spotify:playlist:new"
 
 
 def test_acquire_run_lock_blocks_concurrent_acquisition(db_engine):

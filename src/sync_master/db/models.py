@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import ARRAY, BigInteger, CheckConstraint, DateTime, ForeignKey, Numeric, SmallInteger, Text, func
+from sqlalchemy import ARRAY, BigInteger, CheckConstraint, DateTime, ForeignKey, Numeric, SmallInteger, Text, UniqueConstraint, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, OID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -53,31 +53,67 @@ class SpotifyMatchSource(str, enum.Enum):
     SEARCH = "search"
 
 
-class Playlist(Base):
-    __tablename__ = "playlists"
+class Source(Base):
+    """A dimension table for where a playlist/video came from - just
+    'youtube' today, but playlists/videos identify by (source, external_id)
+    rather than a YouTube-specific column, so a second source is a new row
+    here plus a new fetcher, not a schema rewrite."""
 
-    youtube_playlist_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    __tablename__ = "sources"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Playlist(Base):
+    """The full catalog of every playlist on the account - not just
+    flagged/tracked ones. folder_path/leaf_name/actions are only populated
+    for playlists the naming scheme recognizes (parse_playlist_name); NULL
+    for everything else, which is still cataloged for browsing/annotation."""
+
+    __tablename__ = "playlists"
+    __table_args__ = (UniqueConstraint("source", "external_id"),)
+
+    id: Mapped[int] = _bigint_pk()
+    source: Mapped[str] = mapped_column(ForeignKey("sources.id"), nullable=False)
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)  # YouTube's playlist ID today
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    folder_path: Mapped[str] = mapped_column(Text, nullable=False)
-    leaf_name: Mapped[str] = mapped_column(Text, nullable=False)
-    actions: Mapped[list[str]] = mapped_column(
-        ARRAY(_pg_enum(ActionName, "action_name")), nullable=False
-    )
+    description: Mapped[str | None] = mapped_column(Text)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text)
+    item_count: Mapped[int | None] = mapped_column()
+    published_at: Mapped[datetime | None] = _timestamptz()
+    folder_path: Mapped[str | None] = mapped_column(Text)
+    leaf_name: Mapped[str | None] = mapped_column(Text)
+    actions: Mapped[list[str] | None] = mapped_column(ARRAY(_pg_enum(ActionName, "action_name")))
     first_seen_at: Mapped[datetime] = _timestamptz(server_default=func.now())
     last_seen_at: Mapped[datetime] = _timestamptz(server_default=func.now())
 
+    videos: Mapped[list["Video"]] = relationship(back_populates="playlist")
+
 
 class Video(Base):
-    """Just an FK anchor now - playlist/title/published_at/actions all moved
-    into sync_state.data (see SyncState below). This table exists purely so
-    video_files/transcripts/summaries/spotify_syncs still have a real primary
-    key to reference; nothing else reads or writes columns on it.
+    """The full catalog of every video on the account - not just videos in
+    flagged playlists. Processing status (download/transcript/summarize/
+    spotify_sync) is a separate concern tracked in sync_state, keyed by
+    external_id directly; this table is the metadata catalog and the FK
+    anchor for video_files/transcripts/summaries/spotify_syncs.
     """
 
     __tablename__ = "videos"
+    __table_args__ = (UniqueConstraint("source", "external_id"),)
 
-    youtube_video_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    id: Mapped[int] = _bigint_pk()
+    source: Mapped[str] = mapped_column(ForeignKey("sources.id"), nullable=False)
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)  # YouTube's video ID today
+    playlist_id: Mapped[int | None] = mapped_column(ForeignKey("playlists.id"))
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = _timestamptz()
+    first_seen_at: Mapped[datetime] = _timestamptz(server_default=func.now())
+    last_seen_at: Mapped[datetime] = _timestamptz(server_default=func.now())
 
+    playlist: Mapped["Playlist | None"] = relationship(back_populates="videos")
     file: Mapped["VideoFile | None"] = relationship(
         back_populates="video", cascade="all, delete-orphan", uselist=False
     )
@@ -96,7 +132,9 @@ class SyncState(Base):
     """Singleton row holding the entire state.json-shaped document:
     {"videos": {video_id: {playlist_id, title, published_at, actions: {...}}}}.
     Read once per run, mutated in memory, written back - see
-    db/repository.py:load_state/save_state.
+    db/repository.py:load_state/save_state. Intentionally decoupled from the
+    Video/Playlist catalog above - this is the processing pipeline's status
+    tracking, not catalog metadata, and still keyed by raw YouTube ID strings.
     """
 
     __tablename__ = "sync_state"
@@ -109,9 +147,7 @@ class VideoFile(Base):
     __tablename__ = "video_files"
 
     id: Mapped[int] = _bigint_pk()
-    youtube_video_id: Mapped[str] = mapped_column(
-        ForeignKey("videos.youtube_video_id", ondelete="CASCADE"), unique=True
-    )
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), unique=True)
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str | None] = mapped_column(Text)
     size_bytes: Mapped[int] = mapped_column(nullable=False)
@@ -129,9 +165,7 @@ class Transcript(Base):
     __tablename__ = "transcripts"
 
     id: Mapped[int] = _bigint_pk()
-    youtube_video_id: Mapped[str] = mapped_column(
-        ForeignKey("videos.youtube_video_id", ondelete="CASCADE"), unique=True
-    )
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), unique=True)
     source: Mapped[TranscriptSource] = mapped_column(_pg_enum(TranscriptSource, "transcript_source"))
     text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = _timestamptz(server_default=func.now())
@@ -160,9 +194,7 @@ class Summary(Base):
     __tablename__ = "summaries"
 
     id: Mapped[int] = _bigint_pk()
-    youtube_video_id: Mapped[str] = mapped_column(
-        ForeignKey("videos.youtube_video_id", ondelete="CASCADE"), unique=True
-    )
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), unique=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     instructions: Mapped[str] = mapped_column(Text, nullable=False)
     llm_provider: Mapped[str] = mapped_column(Text, nullable=False)
@@ -176,9 +208,7 @@ class SpotifySync(Base):
     __tablename__ = "spotify_syncs"
 
     id: Mapped[int] = _bigint_pk()
-    youtube_video_id: Mapped[str] = mapped_column(
-        ForeignKey("videos.youtube_video_id", ondelete="CASCADE"), unique=True
-    )
+    video_id: Mapped[int] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), unique=True)
     spotify_track_id: Mapped[str] = mapped_column(Text, nullable=False)
     spotify_track_uri: Mapped[str] = mapped_column(Text, nullable=False)
     spotify_playlist_id: Mapped[str] = mapped_column(Text, nullable=False)
@@ -186,3 +216,17 @@ class SpotifySync(Base):
     synced_at: Mapped[datetime] = _timestamptz(server_default=func.now())
 
     video: Mapped["Video"] = relationship(back_populates="spotify_sync")
+
+
+class SpotifyPlaylist(Base):
+    """Caches the resolved Spotify playlist ID per destination playlist name
+    (playlist_naming.py's leaf_name), so spotify_sync doesn't need to search
+    Spotify for it on every video - see repository.py:get_spotify_playlist_id
+    /save_spotify_playlist_id.
+    """
+
+    __tablename__ = "spotify_playlists"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    spotify_playlist_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    created_at: Mapped[datetime] = _timestamptz(server_default=func.now())

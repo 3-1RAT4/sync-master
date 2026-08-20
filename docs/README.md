@@ -10,7 +10,7 @@ output (downloaded video, transcript, summary, Spotify sync record) lives in
 a Postgres database.
 
 - [Architecture](architecture.md) — how the pieces fit together and why
-- [Setup](setup.md) — installing, bootstrapping, Postgres, YouTube/Spotify OAuth, cron
+- [Setup](setup.md) — installing, bootstrapping, Postgres, YouTube/Spotify OAuth, cron, backup/restore
 - [Configuration](configuration.md) — the playlist naming scheme, the database, `llm.yaml`, Spotify overrides
 - [Actions](actions.md) — what each of the four actions (`download`, `transcript`, `summarize`, `spotify_sync`) does
 - [Development](development.md) — running tests, project layout, dry-run mode, the test database

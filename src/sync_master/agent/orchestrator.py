@@ -76,6 +76,8 @@ def make_action_tools(
     get_transcript_text_fn=repository.get_transcript_text,
     save_summary_fn=repository.save_summary,
     save_spotify_sync_fn=repository.save_spotify_sync,
+    get_spotify_playlist_id_fn=repository.get_spotify_playlist_id,
+    save_spotify_playlist_id_fn=repository.save_spotify_playlist_id,
     summarize_instructions: str = DEFAULT_SUMMARIZE_INSTRUCTIONS,
     spotify_playlist_name: str | None = None,
     video_title: str | None = None,
@@ -120,7 +122,10 @@ def make_action_tools(
         if uri is None:
             raise NoMatchFound(video_id)
 
-        playlist_id = find_or_create_playlist_fn(spotify_playlist_name)
+        playlist_id = get_spotify_playlist_id_fn(session, spotify_playlist_name)
+        if playlist_id is None:
+            playlist_id = find_or_create_playlist_fn(spotify_playlist_name)
+            save_spotify_playlist_id_fn(session, spotify_playlist_name, playlist_id)
         add_to_playlist_fn(playlist_id, uri)
         save_spotify_sync_fn(
             session, video_id, _track_id_from_uri(uri), uri, playlist_id, matched_via

@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from sync_master.db.models import (
     Playlist,
+    Source,
+    SpotifyPlaylist,
     SpotifySync,
     Summary,
     SyncState,
@@ -43,33 +45,113 @@ def acquire_run_lock(session: Session):
         session.execute(text("SELECT pg_advisory_unlock(hashtext(:key))"), {"key": _ADVISORY_LOCK_KEY})
 
 
+def upsert_source(session: Session, source_id: str, display_name: str) -> None:
+    stmt = pg_insert(Source).values(id=source_id, display_name=display_name)
+    stmt = stmt.on_conflict_do_update(index_elements=[Source.id], set_={"display_name": stmt.excluded.display_name})
+    session.execute(stmt)
+    session.commit()
+
+
 def upsert_playlist(
     session: Session,
-    youtube_playlist_id: str,
+    source: str,
+    external_id: str,
     title: str,
-    folder_path: Path | str,
-    leaf_name: str,
-    actions: list[str],
-) -> None:
+    description: str | None = None,
+    thumbnail_url: str | None = None,
+    item_count: int | None = None,
+    published_at: str | None = None,
+    folder_path: Path | str | None = None,
+    leaf_name: str | None = None,
+    actions: list[str] | None = None,
+) -> int:
+    """Upserts the full catalog row for a playlist - every playlist on the
+    account, not just flagged/tracked ones (folder_path/leaf_name/actions
+    are only ever non-NULL for those). Returns the surrogate playlist id,
+    needed as the FK value for upsert_video below.
+    """
     stmt = pg_insert(Playlist).values(
-        youtube_playlist_id=youtube_playlist_id,
+        source=source,
+        external_id=external_id,
         title=title,
-        folder_path=str(folder_path),
+        description=description,
+        thumbnail_url=thumbnail_url,
+        item_count=item_count,
+        published_at=published_at,
+        folder_path=str(folder_path) if folder_path is not None else None,
         leaf_name=leaf_name,
         actions=actions,
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[Playlist.youtube_playlist_id],
+        index_elements=[Playlist.source, Playlist.external_id],
         set_={
             "title": stmt.excluded.title,
+            "description": stmt.excluded.description,
+            "thumbnail_url": stmt.excluded.thumbnail_url,
+            "item_count": stmt.excluded.item_count,
+            "published_at": stmt.excluded.published_at,
             "folder_path": stmt.excluded.folder_path,
             "leaf_name": stmt.excluded.leaf_name,
             "actions": stmt.excluded.actions,
             "last_seen_at": func.now(),
         },
-    )
-    session.execute(stmt)
+    ).returning(Playlist.id)
+    playlist_pk = session.execute(stmt).scalar_one()
     session.commit()
+    return playlist_pk
+
+
+def upsert_video(
+    session: Session,
+    source: str,
+    external_id: str,
+    title: str,
+    playlist_id: int | None = None,
+    description: str | None = None,
+    thumbnail_url: str | None = None,
+    published_at: str | None = None,
+) -> int:
+    """Upserts the full catalog row for a video - every video on the
+    account, not just ones in flagged playlists. Also serves as the FK
+    anchor for video_files/transcripts/summaries/spotify_syncs, so this
+    always runs (via the discovery loop) before any action dispatch for a
+    video. Returns the surrogate video id.
+    """
+    stmt = pg_insert(Video).values(
+        source=source,
+        external_id=external_id,
+        playlist_id=playlist_id,
+        title=title,
+        description=description,
+        thumbnail_url=thumbnail_url,
+        published_at=published_at,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[Video.source, Video.external_id],
+        set_={
+            "playlist_id": stmt.excluded.playlist_id,
+            "title": stmt.excluded.title,
+            "description": stmt.excluded.description,
+            "thumbnail_url": stmt.excluded.thumbnail_url,
+            "published_at": stmt.excluded.published_at,
+            "last_seen_at": func.now(),
+        },
+    ).returning(Video.id)
+    video_pk = session.execute(stmt).scalar_one()
+    session.commit()
+    return video_pk
+
+
+def _resolve_video_pk(session: Session, external_id: str, source: str = "youtube") -> int:
+    """Every artifact table (video_files/transcripts/summaries/spotify_syncs)
+    FKs against videos.id, not the raw external ID - this resolves it.
+    Callers always run after upsert_video has already created the row (the
+    discovery loop upserts every video before any action dispatch), so a
+    missing row here means a real ordering bug, not a normal case.
+    """
+    return session.execute(
+        select(Video.id).where(Video.source == source, Video.external_id == external_id)
+    ).scalar_one()
 
 
 def load_state(session: Session) -> dict:
@@ -92,17 +174,6 @@ def save_state(session: Session, data: dict) -> None:
     session.commit()
 
 
-def ensure_video_row(session: Session, youtube_video_id: str) -> None:
-    """Upserts a bare row into the videos anchor table (see db/models.py:Video)
-    so video_files/transcripts/summaries/spotify_syncs always have something
-    to foreign-key against, regardless of which actions ultimately run for
-    this video. Call once when a video is first discovered."""
-    stmt = pg_insert(Video).values(youtube_video_id=youtube_video_id)
-    stmt = stmt.on_conflict_do_nothing(index_elements=[Video.youtube_video_id])
-    session.execute(stmt)
-    session.commit()
-
-
 def save_video_file(
     session: Session,
     youtube_video_id: str,
@@ -121,15 +192,16 @@ def save_video_file(
     large_object.write(content)
     large_object.close()
 
+    video_pk = _resolve_video_pk(session, youtube_video_id)
     stmt = pg_insert(VideoFile).values(
-        youtube_video_id=youtube_video_id,
+        video_id=video_pk,
         filename=filename,
         content_type=content_type,
         size_bytes=len(content),
         content_oid=large_object.oid,
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[VideoFile.youtube_video_id],
+        index_elements=[VideoFile.video_id],
         set_={
             "filename": stmt.excluded.filename,
             "content_type": stmt.excluded.content_type,
@@ -142,8 +214,9 @@ def save_video_file(
 
 
 def get_video_file_content(session: Session, youtube_video_id: str) -> bytes | None:
+    video_pk = _resolve_video_pk(session, youtube_video_id)
     content_oid = session.execute(
-        select(VideoFile.content_oid).where(VideoFile.youtube_video_id == youtube_video_id)
+        select(VideoFile.content_oid).where(VideoFile.video_id == video_pk)
     ).scalar_one_or_none()
     if content_oid is None:
         return None
@@ -157,8 +230,9 @@ def get_video_file_content(session: Session, youtube_video_id: str) -> bytes | N
 
 
 def get_transcript_text(session: Session, youtube_video_id: str) -> str | None:
+    video_pk = _resolve_video_pk(session, youtube_video_id)
     return session.execute(
-        select(Transcript.text).where(Transcript.youtube_video_id == youtube_video_id)
+        select(Transcript.text).where(Transcript.video_id == video_pk)
     ).scalar_one_or_none()
 
 
@@ -169,13 +243,14 @@ def save_transcript(
     text_: str,
     segments: list,
 ) -> None:
+    video_pk = _resolve_video_pk(session, youtube_video_id)
     stmt = pg_insert(Transcript).values(
-        youtube_video_id=youtube_video_id,
+        video_id=video_pk,
         source=source,
         text=text_,
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[Transcript.youtube_video_id],
+        index_elements=[Transcript.video_id],
         set_={"source": stmt.excluded.source, "text": stmt.excluded.text, "created_at": func.now()},
     ).returning(Transcript.id)
     transcript_id = session.execute(stmt).scalar_one()
@@ -203,15 +278,16 @@ def save_summary(
     llm_provider: str,
     llm_model: str,
 ) -> None:
+    video_pk = _resolve_video_pk(session, youtube_video_id)
     stmt = pg_insert(Summary).values(
-        youtube_video_id=youtube_video_id,
+        video_id=video_pk,
         content=content,
         instructions=instructions,
         llm_provider=llm_provider,
         llm_model=llm_model,
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[Summary.youtube_video_id],
+        index_elements=[Summary.video_id],
         set_={
             "content": stmt.excluded.content,
             "instructions": stmt.excluded.instructions,
@@ -232,15 +308,16 @@ def save_spotify_sync(
     spotify_playlist_id: str,
     matched_via: str,
 ) -> None:
+    video_pk = _resolve_video_pk(session, youtube_video_id)
     stmt = pg_insert(SpotifySync).values(
-        youtube_video_id=youtube_video_id,
+        video_id=video_pk,
         spotify_track_id=spotify_track_id,
         spotify_track_uri=spotify_track_uri,
         spotify_playlist_id=spotify_playlist_id,
         matched_via=matched_via,
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=[SpotifySync.youtube_video_id],
+        index_elements=[SpotifySync.video_id],
         set_={
             "spotify_track_id": stmt.excluded.spotify_track_id,
             "spotify_track_uri": stmt.excluded.spotify_track_uri,
@@ -248,6 +325,25 @@ def save_spotify_sync(
             "matched_via": stmt.excluded.matched_via,
             "synced_at": func.now(),
         },
+    )
+    session.execute(stmt)
+    session.commit()
+
+
+def get_spotify_playlist_id(session: Session, name: str) -> str | None:
+    """Cached Spotify playlist ID for a destination playlist name (see
+    SpotifyPlaylist), so spotify_sync can skip find_or_create_playlist's
+    Spotify API search once a name has been resolved once."""
+    return session.execute(
+        select(SpotifyPlaylist.spotify_playlist_id).where(SpotifyPlaylist.name == name)
+    ).scalar_one_or_none()
+
+
+def save_spotify_playlist_id(session: Session, name: str, spotify_playlist_id: str) -> None:
+    stmt = pg_insert(SpotifyPlaylist).values(name=name, spotify_playlist_id=spotify_playlist_id)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[SpotifyPlaylist.name],
+        set_={"spotify_playlist_id": stmt.excluded.spotify_playlist_id},
     )
     session.execute(stmt)
     session.commit()

@@ -20,6 +20,10 @@ def _spotify_tool(tmp_path, **kwargs):
         "find_or_create_playlist_fn", lambda name: "spotify:playlist:zzz"
     )
     kwargs.setdefault("save_spotify_sync_fn", _noop)
+    # Default to a cache miss (find_or_create_playlist_fn should run) unless a
+    # test overrides this to exercise the cache-hit path.
+    kwargs.setdefault("get_spotify_playlist_id_fn", lambda session, name: None)
+    kwargs.setdefault("save_spotify_playlist_id_fn", _noop)
     tools = make_action_tools(
         video_id="v1",
         scratch_dir=tmp_path,
@@ -306,6 +310,48 @@ def test_spotify_sync_records_track_id_extracted_from_uri(tmp_path):
     tool.func()
 
     assert saved == {"track_id": "abc123", "track_uri": "spotify:track:abc123", "matched_via": "search"}
+
+
+def test_spotify_sync_uses_cached_playlist_id_without_searching_spotify(tmp_path):
+    added = []
+
+    def fail_find_or_create(name):
+        raise AssertionError("must not search/create when a cached playlist id already exists")
+
+    tool, actions_state = _spotify_tool(
+        tmp_path,
+        search_track_fn=lambda query: "spotify:track:found",
+        add_to_playlist_fn=lambda playlist_id, uri: added.append((playlist_id, uri)),
+        spotify_playlist_name="PARTY",
+        find_or_create_playlist_fn=fail_find_or_create,
+        get_spotify_playlist_id_fn=lambda session, name: "spotify:playlist:cached",
+    )
+
+    tool.func()
+
+    assert added == [("spotify:playlist:cached", "spotify:track:found")]
+    assert actions_state["spotify_sync"]["status"] == "done"
+
+
+def test_spotify_sync_caches_playlist_id_after_resolving_it_fresh(tmp_path):
+    cached = {}
+
+    def fake_save_spotify_playlist_id(session, name, spotify_playlist_id):
+        cached[name] = spotify_playlist_id
+
+    tool, _ = _spotify_tool(
+        tmp_path,
+        search_track_fn=lambda query: "spotify:track:found",
+        add_to_playlist_fn=lambda playlist_id, uri: None,
+        spotify_playlist_name="PARTY",
+        find_or_create_playlist_fn=lambda name: "spotify:playlist:newly-resolved",
+        get_spotify_playlist_id_fn=lambda session, name: None,
+        save_spotify_playlist_id_fn=fake_save_spotify_playlist_id,
+    )
+
+    tool.func()
+
+    assert cached == {"PARTY": "spotify:playlist:newly-resolved"}
 
 
 def test_run_actions_for_video_runs_only_the_given_actions_in_canonical_order(tmp_path):

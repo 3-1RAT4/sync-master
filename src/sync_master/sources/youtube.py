@@ -1,5 +1,15 @@
 from dataclasses import dataclass
 
+_THUMBNAIL_PREFERENCE = ("maxres", "standard", "high", "medium", "default")
+
+
+def _best_thumbnail_url(thumbnails: dict) -> str | None:
+    for key in _THUMBNAIL_PREFERENCE:
+        entry = thumbnails.get(key)
+        if entry:
+            return entry.get("url")
+    return None
+
 
 @dataclass(frozen=True)
 class VideoItem:
@@ -7,12 +17,18 @@ class VideoItem:
     title: str
     published_at: str
     playlist_id: str
+    description: str = ""
+    thumbnail_url: str | None = None
 
 
 @dataclass(frozen=True)
 class PlaylistInfo:
     playlist_id: str
     title: str
+    description: str = ""
+    thumbnail_url: str | None = None
+    item_count: int | None = None
+    published_at: str | None = None
 
 
 def _build_client(api_key: str):
@@ -24,17 +40,22 @@ def _build_client(api_key: str):
 def fetch_my_playlists(youtube_client) -> list[PlaylistInfo]:
     playlists: list[PlaylistInfo] = []
     request = youtube_client.playlists().list(
-        part="snippet",
+        part="snippet,contentDetails",
         mine=True,
         maxResults=50,
     )
     while request is not None:
         response = request.execute()
         for raw_item in response.get("items", []):
+            snippet = raw_item["snippet"]
             playlists.append(
                 PlaylistInfo(
                     playlist_id=raw_item["id"],
-                    title=raw_item["snippet"]["title"],
+                    title=snippet["title"],
+                    description=snippet.get("description", ""),
+                    thumbnail_url=_best_thumbnail_url(snippet.get("thumbnails") or {}),
+                    item_count=raw_item.get("contentDetails", {}).get("itemCount"),
+                    published_at=snippet.get("publishedAt"),
                 )
             )
         request = youtube_client.playlists().list_next(request, response)
@@ -54,12 +75,20 @@ def fetch_playlist_items(playlist_id: str, api_key: str | None = None, youtube_c
     while request is not None:
         response = request.execute()
         for raw_item in response.get("items", []):
+            snippet = raw_item["snippet"]
+            content_details = raw_item.get("contentDetails", {})
             items.append(
                 VideoItem(
-                    video_id=raw_item["contentDetails"]["videoId"],
-                    title=raw_item["snippet"]["title"],
-                    published_at=raw_item["contentDetails"]["videoPublishedAt"],
+                    video_id=content_details.get("videoId") or raw_item["snippet"]["resourceId"]["videoId"],
+                    title=snippet["title"],
+                    # contentDetails.videoPublishedAt is sometimes absent (seen on
+                    # real accounts, e.g. for a since-deleted/privated video still
+                    # listed in a playlist) - fall back to when it was added to
+                    # this playlist, which snippet.publishedAt always has.
+                    published_at=content_details.get("videoPublishedAt") or snippet.get("publishedAt", ""),
                     playlist_id=playlist_id,
+                    description=snippet.get("description", ""),
+                    thumbnail_url=_best_thumbnail_url(snippet.get("thumbnails") or {}),
                 )
             )
         request = client.playlistItems().list_next(request, response)

@@ -29,9 +29,9 @@ def perform_run(
     session_factory=get_session,
     acquire_run_lock=repository.acquire_run_lock,
     upsert_playlist_fn=repository.upsert_playlist,
+    upsert_video_fn=repository.upsert_video,
     load_state_fn=repository.load_state,
     save_state_fn=repository.save_state,
-    ensure_video_row_fn=repository.ensure_video_row,
 ) -> None:
     from dotenv import load_dotenv
 
@@ -52,21 +52,45 @@ def perform_run(
             parsed_by_playlist_id = {}
             for playlist in playlists:
                 parsed = parse_playlist_name(playlist.title)
-                if parsed is None:
-                    continue
-                parsed_by_playlist_id[playlist.playlist_id] = parsed
-                upsert_playlist_fn(
+                if parsed is not None:
+                    parsed_by_playlist_id[playlist.playlist_id] = parsed
+
+                # Full catalog: every playlist gets cataloged, flagged/tracked
+                # or not - folder_path/leaf_name/actions stay NULL for the rest.
+                playlist_pk = upsert_playlist_fn(
                     session,
-                    youtube_playlist_id=playlist.playlist_id,
+                    source="youtube",
+                    external_id=playlist.playlist_id,
                     title=playlist.title,
-                    folder_path=parsed.folder_path,
-                    leaf_name=parsed.leaf_name,
-                    actions=parsed.actions,
+                    description=playlist.description,
+                    thumbnail_url=playlist.thumbnail_url,
+                    item_count=playlist.item_count,
+                    published_at=playlist.published_at,
+                    folder_path=parsed.folder_path if parsed else None,
+                    leaf_name=parsed.leaf_name if parsed else None,
+                    actions=parsed.actions if parsed else None,
                 )
 
                 fetched = fetch_items_fn(playlist.playlist_id, youtube_client=youtube_client)
+
+                # Full catalog: every video gets cataloged too, and this also
+                # ensures the FK anchor exists before any action dispatch below.
+                for item in fetched:
+                    upsert_video_fn(
+                        session,
+                        source="youtube",
+                        external_id=item.video_id,
+                        playlist_id=playlist_pk,
+                        title=item.title,
+                        description=item.description,
+                        thumbnail_url=item.thumbnail_url,
+                        published_at=item.published_at,
+                    )
+
+                if parsed is None:
+                    continue
+
                 for item in diff_new_videos(state["videos"].keys(), fetched):
-                    ensure_video_row_fn(session, item.video_id)
                     state["videos"][item.video_id] = {
                         "playlist_id": item.playlist_id,
                         "title": item.title,

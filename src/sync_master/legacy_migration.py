@@ -40,6 +40,7 @@ def migrate_legacy_state(
             playlist_titles[playlist.playlist_id] = playlist.title
 
     parsed_by_playlist: dict[str, ParsedPlaylist] = {}
+    playlist_pk_by_id: dict[str, int] = {}
     counts = {"playlists": 0, "videos": 0, "actions": 0, "video_files": 0, "transcripts": 0, "summaries": 0}
 
     # state.json's per-video shape is now identical to sync_state.data's, so this
@@ -57,9 +58,10 @@ def migrate_legacy_state(
                 folder_path=Path(playlist_id), leaf_name=playlist_id, actions=[]
             )
             parsed_by_playlist[playlist_id] = parsed
-            repository.upsert_playlist(
+            playlist_pk_by_id[playlist_id] = repository.upsert_playlist(
                 session,
-                youtube_playlist_id=playlist_id,
+                source="youtube",
+                external_id=playlist_id,
                 title=title,
                 folder_path=parsed.folder_path,
                 leaf_name=parsed.leaf_name,
@@ -68,7 +70,16 @@ def migrate_legacy_state(
             counts["playlists"] += 1
 
         parsed = parsed_by_playlist[playlist_id]
-        repository.ensure_video_row(session, video_id)
+        # Legacy state.json entries never had description/thumbnail_url - those
+        # stay NULL here and get filled in by the next live sync-master run.
+        repository.upsert_video(
+            session,
+            source="youtube",
+            external_id=video_id,
+            playlist_id=playlist_pk_by_id[playlist_id],
+            title=video.get("title") or video_id,
+            published_at=video.get("published_at"),
+        )
         current_state["videos"][video_id] = video
         counts["videos"] += 1
         counts["actions"] += len(video.get("actions", {}))

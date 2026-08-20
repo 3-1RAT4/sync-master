@@ -14,25 +14,61 @@ class FakeRepo:
 
     def __init__(self):
         self.playlists: dict = {}
+        self.videos: dict = {}
         self.state: dict = {"videos": {}}
-        self.known_video_ids: set = set()
+        self._next_playlist_pk = 1
+        self._next_video_pk = 1
 
-    def upsert_playlist(self, session, youtube_playlist_id, title, folder_path, leaf_name, actions):
-        self.playlists[youtube_playlist_id] = {
+    def upsert_playlist(
+        self,
+        session,
+        source,
+        external_id,
+        title,
+        description=None,
+        thumbnail_url=None,
+        item_count=None,
+        published_at=None,
+        folder_path=None,
+        leaf_name=None,
+        actions=None,
+    ):
+        existing = self.playlists.get(external_id)
+        pk = existing["pk"] if existing else self._next_playlist_pk
+        if existing is None:
+            self._next_playlist_pk += 1
+        self.playlists[external_id] = {
+            "pk": pk,
             "title": title,
             "folder_path": folder_path,
             "leaf_name": leaf_name,
             "actions": actions,
         }
+        return pk
+
+    def upsert_video(
+        self,
+        session,
+        source,
+        external_id,
+        title,
+        playlist_id=None,
+        description=None,
+        thumbnail_url=None,
+        published_at=None,
+    ):
+        existing = self.videos.get(external_id)
+        pk = existing["pk"] if existing else self._next_video_pk
+        if existing is None:
+            self._next_video_pk += 1
+        self.videos[external_id] = {"pk": pk, "title": title, "playlist_id": playlist_id}
+        return pk
 
     def load_state(self, session):
         return self.state
 
     def save_state(self, session, data):
         self.state = data
-
-    def ensure_video_row(self, session, youtube_video_id):
-        self.known_video_ids.add(youtube_video_id)
 
     def seed_video(self, video_id, playlist_id, title, published_at, actions=None):
         self.state["videos"][video_id] = {
@@ -41,7 +77,6 @@ class FakeRepo:
             "published_at": published_at,
             "actions": {name: {"status": status} for name, status in (actions or {}).items()},
         }
-        self.known_video_ids.add(video_id)
 
     @contextlib.contextmanager
     def acquire_run_lock(self, session):
@@ -63,20 +98,23 @@ def _run(tmp_path, repo, **kwargs):
     kwargs.setdefault("session_factory", _FakeSession)
     kwargs.setdefault("acquire_run_lock", repo.acquire_run_lock)
     kwargs.setdefault("upsert_playlist_fn", repo.upsert_playlist)
+    kwargs.setdefault("upsert_video_fn", repo.upsert_video)
     kwargs.setdefault("load_state_fn", repo.load_state)
     kwargs.setdefault("save_state_fn", repo.save_state)
-    kwargs.setdefault("ensure_video_row_fn", repo.ensure_video_row)
     perform_run(tmp_path, **kwargs)
 
 
-def test_perform_run_skips_playlists_with_no_recognized_flags(tmp_path):
+def test_perform_run_catalogs_but_does_not_dispatch_untracked_playlists(tmp_path):
+    # Every playlist gets cataloged (full catalog, see runner.py), including
+    # untracked ones - but untracked videos never enter sync_state (the
+    # processing pipeline), so nothing gets dispatched for them.
     repo = FakeRepo()
 
     def fake_fetch_playlists(client):
         return [PlaylistInfo(playlist_id="PL_UNTRACKED", title="Favoritos")]
 
     def fake_fetch_items(playlist_id, youtube_client=None):
-        raise AssertionError("must not fetch items for an untracked playlist")
+        return [VideoItem(video_id="v1", title="Some Video", published_at="2026-01-01", playlist_id=playlist_id)]
 
     _run(
         tmp_path,
@@ -85,10 +123,13 @@ def test_perform_run_skips_playlists_with_no_recognized_flags(tmp_path):
         fetch_playlists_fn=fake_fetch_playlists,
         fetch_items_fn=fake_fetch_items,
         youtube_client_factory=lambda: "fake-client",
-        action_runner=lambda **kwargs: None,
+        action_runner=lambda **kwargs: (_ for _ in ()).throw(AssertionError("must not dispatch an untracked video")),
     )
 
     assert repo.state["videos"] == {}
+    assert "PL_UNTRACKED" in repo.playlists
+    assert repo.playlists["PL_UNTRACKED"]["folder_path"] is None
+    assert "v1" in repo.videos
 
 
 def test_perform_run_adds_newly_fetched_videos_from_flagged_playlist(tmp_path):

@@ -1,7 +1,10 @@
 import os
 from pathlib import Path
 
-SCOPE = "playlist-modify-public playlist-modify-private"
+SCOPE = (
+    "playlist-modify-public playlist-modify-private "
+    "playlist-read-private playlist-read-collaborative"
+)
 CACHE_PATH = Path.home() / ".config" / "sync-master" / ".spotify_cache"
 
 

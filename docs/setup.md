@@ -126,9 +126,11 @@ as written in `credentials.env`), run:
 ```
 
 This opens a browser for the one-time Spotify OAuth approval (scopes:
-`playlist-modify-public playlist-modify-private`, needed to add tracks to
-*your* playlists — an app-level client ID/secret alone isn't sufficient for
-that). Unlike the YouTube flow, the resulting token is **not** written into
+`playlist-modify-public playlist-modify-private playlist-read-private
+playlist-read-collaborative` — the `modify` scopes create playlists and add
+tracks; the `read` scopes are what let `find_or_create_playlist` see a
+private playlist it already created, so it doesn't create a duplicate every
+run). Unlike the YouTube flow, the resulting token is **not** written into
 `credentials.env` — `spotipy` caches it itself at
 `~/.config/sync-master/.spotify_cache`, and `sync-master run` reads from
 that cache automatically afterward.
@@ -199,3 +201,53 @@ won't be needlessly redone — the `spotify_syncs` table itself just stays
 empty for those). All of this is captured correctly going forward. Once
 you've confirmed the import looks right, the old `state.json` and
 `output_base_dir` are no longer read by sync-master and can be deleted.
+
+## Backup and restore
+
+Everything durable lives in Postgres now, including video bytes (stored as
+Postgres Large Objects). `scripts/backup_db.sh` and `scripts/restore_db.sh`
+wrap `pg_dump`/`pg_restore`'s custom format (`-Fc`), which captures schema,
+data, and Large Objects together — a plain-format dump would silently drop
+the video bytes unless you remembered `-b` yourself.
+
+Needs the Postgres client tools, which aren't a Python dependency:
+
+```bash
+sudo dnf install postgresql   # or your distro's equivalent
+```
+
+Take a backup:
+
+```bash
+scripts/backup_db.sh
+```
+
+Writes a timestamped `.dump` file to `~/.config/sync-master/backups/`
+(outside the repo, so it can never end up committed) and updates a
+`latest.dump` symlink to it. Override the source with `--database-url` or
+the destination directory with `--output-dir`.
+
+Restore one:
+
+```bash
+scripts/restore_db.sh                                    # restores latest.dump into DATABASE_URL
+scripts/restore_db.sh --database-url ... some_backup.dump # restore a specific file elsewhere
+```
+
+**This is destructive to its target** — existing objects are dropped and
+replaced with the backup's contents. It asks for confirmation unless you
+pass `--yes` (needed for non-interactive/cron use). Pass `--create-db` if
+the target database doesn't exist yet (e.g. restoring onto a fresh server).
+
+If `pg_dump`/`pg_restore` are a newer major version than the Postgres server
+itself, you may see a warning about an unrecognized session parameter (e.g.
+`transaction_timeout`) — `restore_db.sh` already detects and ignores this
+specific known-harmless mismatch; the actual restore still completes
+correctly. Matching the client's major version to the server's avoids the
+warning entirely.
+
+Avoid running either script while a `sync-master run` involving heavy
+transcription/diarization is active — both scripts are safe to run
+concurrently with normal usage, but a CPU-saturated `sync-master run` can
+starve Postgres badly enough to make `pg_restore` (which writes Large
+Objects) noticeably slow.
