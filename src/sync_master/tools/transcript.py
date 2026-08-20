@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from sync_master.tools.naming import transcript_filename
-
 
 class NoCaptionsAvailable(Exception):
     pass
@@ -12,6 +10,7 @@ class NoCaptionsAvailable(Exception):
 class TranscriptResult:
     text: str
     source: str
+    segments: list  # list[sync_master.tools.diarize.SpeakerSegment]
 
 
 def _default_fetch_caption_segments(video_id: str) -> list[dict]:
@@ -28,10 +27,10 @@ def _default_fetch_caption_segments(video_id: str) -> list[dict]:
     ]
 
 
-def _default_transcribe_segments(video_id: str, output_dir: Path, title: str | None) -> list[dict]:
+def _default_transcribe_segments(video_id: str, scratch_dir: Path, title: str | None) -> list[dict]:
     from sync_master.tools.download import download_video
 
-    audio_path = download_video(video_id, output_dir, title=title)
+    audio_path = download_video(video_id, scratch_dir, title=title)
 
     import whisper
 
@@ -40,17 +39,17 @@ def _default_transcribe_segments(video_id: str, output_dir: Path, title: str | N
     return [{"start": seg["start"], "end": seg["end"], "text": seg["text"]} for seg in result["segments"]]
 
 
-def _default_diarize_speakers(video_id: str, output_dir: Path, title: str | None):
+def _default_diarize_speakers(video_id: str, scratch_dir: Path, title: str | None):
     from sync_master.tools.diarize import diarize_audio
     from sync_master.tools.download import download_video
 
-    audio_path = download_video(video_id, output_dir, title=title)
+    audio_path = download_video(video_id, scratch_dir, title=title)
     return diarize_audio(audio_path)
 
 
 def get_transcript(
     video_id: str,
-    output_dir: Path,
+    scratch_dir: Path,
     title: str | None = None,
     fetch_caption_segments=None,
     transcribe_segments=None,
@@ -66,13 +65,10 @@ def get_transcript(
         segments = fetch_caption_segments(video_id)
         source = "captions"
     except NoCaptionsAvailable:
-        segments = transcribe_segments(video_id, output_dir, title)
+        segments = transcribe_segments(video_id, scratch_dir, title)
         source = "whisper"
 
-    speaker_segments = diarize_speakers(video_id, output_dir, title)
+    speaker_segments = diarize_speakers(video_id, scratch_dir, title)
     text = format_as_conversation(segments, speaker_segments)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / transcript_filename(title)).write_text(text)
-
-    return TranscriptResult(text=text, source=source)
+    return TranscriptResult(text=text, source=source, segments=speaker_segments)

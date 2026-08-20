@@ -111,14 +111,14 @@ def test_fetch_playlist_items_follows_pagination_across_pages():
     assert [item.video_id for item in items] == ["v1", "v2"]
 
 
-def test_diff_new_videos_excludes_videos_already_in_state():
-    state = {"videos": {"v1": {"title": "Already seen"}}}
+def test_diff_new_videos_excludes_already_known_video_ids():
+    known_video_ids = {"v1"}
     fetched = [
         VideoItem(video_id="v1", title="Already seen", published_at="...", playlist_id="PL123"),
         VideoItem(video_id="v2", title="New video", published_at="...", playlist_id="PL123"),
     ]
 
-    new_items = diff_new_videos(state, fetched)
+    new_items = diff_new_videos(known_video_ids, fetched)
 
     assert [item.video_id for item in new_items] == ["v2"]
 

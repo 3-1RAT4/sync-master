@@ -22,6 +22,7 @@ class FakePlaylistClient:
         self._pages = pages
         self._user_id = user_id
         self.created = []
+        self.followed = []
 
     def current_user_playlists(self, limit=50, offset=0):
         page_index = offset // limit
@@ -36,6 +37,9 @@ class FakePlaylistClient:
         self.created.append((user_id, name, public))
         return {"id": "spotify:playlist:newly-created"}
 
+    def current_user_follow_playlist(self, playlist_id):
+        self.followed.append(playlist_id)
+
 
 def test_find_or_create_playlist_returns_existing_playlist_id_when_found():
     client = FakePlaylistClient(
@@ -46,6 +50,7 @@ def test_find_or_create_playlist_returns_existing_playlist_id_when_found():
 
     assert playlist_id == "spotify:playlist:existing"
     assert client.created == []
+    assert client.followed == []
 
 
 def test_find_or_create_playlist_finds_match_across_pages():
@@ -68,3 +73,16 @@ def test_find_or_create_playlist_creates_new_playlist_when_not_found():
 
     assert playlist_id == "spotify:playlist:newly-created"
     assert client.created == [("user123", "PARTY", False)]
+
+
+def test_find_or_create_playlist_follows_the_newly_created_playlist():
+    # Creating a playlist via the API doesn't reliably add it to the user's
+    # own library listing (current_user_playlists), which is what this same
+    # function's search relies on for future calls - confirmed on a real
+    # account. Without explicitly following it, a later call for the same
+    # name could fail to find it and create a duplicate.
+    client = FakePlaylistClient(pages=[[{"id": "spotify:playlist:other", "name": "OTHER"}]])
+
+    find_or_create_playlist("PARTY", spotify_client=client)
+
+    assert client.followed == ["spotify:playlist:newly-created"]

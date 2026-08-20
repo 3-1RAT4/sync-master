@@ -28,4 +28,11 @@ def find_or_create_playlist(name: str, spotify_client=None) -> str:
 
     user_id = client.current_user()["id"]
     created = client.user_playlist_create(user_id, name, public=False)
+    # Creating a playlist via the API doesn't reliably put it in the user's
+    # own library listing (current_user_playlists) - confirmed on a real
+    # account: the playlist existed, was owned and public, yet never showed
+    # up there until explicitly followed. Since find_or_create_playlist's own
+    # search relies on that same listing, an unfollowed-but-owned playlist
+    # would never be found on a later call and a duplicate would get created.
+    client.current_user_follow_playlist(created["id"])
     return created["id"]
