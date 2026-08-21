@@ -98,3 +98,20 @@ def fetch_playlist_items(playlist_id: str, api_key: str | None = None, youtube_c
 
 def diff_new_videos(known_video_ids: set[str], fetched: list[VideoItem]) -> list[VideoItem]:
     return [item for item in fetched if item.video_id not in known_video_ids]
+
+
+def rename_playlist(playlist_id: str, new_title: str, youtube_client) -> None:
+    """Needs the read/write `youtube` scope (youtube_auth.py) - youtube.readonly
+    can't call playlists.update. Fetches the existing snippet first and only
+    changes `title` before writing it back - the API replaces the whole
+    `snippet` part on update, so sending just {"title": ...} would silently
+    wipe the playlist's description/tags/etc.
+    """
+    response = youtube_client.playlists().list(part="snippet", id=playlist_id).execute()
+    items = response.get("items", [])
+    if not items:
+        raise ValueError(f"Playlist not found: {playlist_id}")
+
+    snippet = items[0]["snippet"]
+    snippet["title"] = new_title
+    youtube_client.playlists().update(part="snippet", body={"id": playlist_id, "snippet": snippet}).execute()

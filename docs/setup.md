@@ -113,9 +113,12 @@ by hand — once the client ID/secret are in place, run:
 .venv/bin/sync-master youtube-login
 ```
 
-This opens a browser for the one-time OAuth approval (scope:
-`youtube.readonly`) and writes the resulting refresh token into
-`credentials.env`.
+This opens a browser for the one-time OAuth approval (scope: `youtube` -
+read/write; needed because `youtube.readonly` can't rename playlists) and
+writes the resulting refresh token into `credentials.env`. If you're
+upgrading an install that authorized under the old `youtube.readonly` scope,
+re-run this command to get a token with write access - the existing
+refresh token doesn't gain the new scope on its own.
 
 Similarly, once `SPOTIFY_CLIENT_ID`/`_SECRET` are filled in (and
 `SPOTIFY_REDIRECT_URI` is registered in your Spotify app's dashboard exactly

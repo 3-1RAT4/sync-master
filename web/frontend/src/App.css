@@ -1,0 +1,232 @@
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem 3rem;
+  font-family: system-ui, sans-serif;
+  color: #1a1a1a;
+}
+
+/* The playlist browser is a file explorer, not an article - let it use the
+   full width of the page instead of sitting in a narrow centered column. */
+.explorer-page {
+  max-width: none;
+}
+
+.app-header {
+  padding: 1rem 0;
+  border-bottom: 1px solid #e2e2e2;
+  margin-bottom: 1.5rem;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  text-decoration: none;
+  color: #1a1a1a;
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin-top: 2rem;
+}
+
+.hint {
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.error {
+  color: #b00020;
+}
+
+.playlist-list,
+.video-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.playlist-list li,
+.video-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eee;
+}
+
+.playlist-list a,
+.video-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+  flex: 1;
+  min-width: 0;
+}
+
+.tree {
+  font-size: 0.95rem;
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* Every row - folder or playlist - shares one shape: a full-width flex line
+   with a fixed-width gutter (chevron for folders, a plain marker for
+   playlists) so labels line up at each depth regardless of row type. Rows
+   go edge-to-edge and highlight on hover across their whole width, like a
+   real file explorer, instead of just underlining a bit of text. */
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-bottom: 1px solid #f0f0f0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.tree-row:last-child {
+  border-bottom: none;
+}
+
+.tree-row:hover {
+  background: #f3f6fb;
+}
+
+.tree-gutter {
+  flex-shrink: 0;
+  width: 1rem;
+  text-align: center;
+  font-size: 0.7rem;
+  color: #999;
+}
+
+.tree-chevron {
+  transition: transform 0.1s ease;
+}
+
+.tree-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.tree-row-file .tree-gutter {
+  color: #bbb;
+  font-size: 0.6rem;
+}
+
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-label-folder {
+  font-weight: 600;
+  color: #333;
+}
+
+.tree-row-file .tree-label {
+  color: #1a56db;
+}
+
+.tree-row-file:hover .tree-label {
+  text-decoration: underline;
+}
+
+.tree-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  padding-left: 1rem;
+  flex-shrink: 0;
+}
+
+.playlist-title,
+.video-title {
+  font-weight: 500;
+}
+
+.item-count,
+.video-meta {
+  color: #888;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.thumb {
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.badges {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0;
+}
+
+.badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #eee;
+  color: #444;
+}
+
+.badge.status-done {
+  background: #d7f5df;
+  color: #1a6b34;
+}
+
+.badge.status-failed {
+  background: #fbdada;
+  color: #a12727;
+}
+
+.badge.status-no-match {
+  background: #fff2cc;
+  color: #8a6d00;
+}
+
+.description {
+  white-space: pre-wrap;
+  color: #333;
+}
+
+.prose {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.transcript {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 1rem;
+  max-height: 32rem;
+  overflow-y: auto;
+}

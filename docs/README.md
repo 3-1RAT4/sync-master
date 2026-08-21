@@ -14,3 +14,4 @@ a Postgres database.
 - [Configuration](configuration.md) — the playlist naming scheme, the database, `llm.yaml`, Spotify overrides
 - [Actions](actions.md) — what each of the four actions (`download`, `transcript`, `summarize`, `spotify_sync`) does
 - [Development](development.md) — running tests, project layout, dry-run mode, the test database
+- [Web UI](web-ui.md) — the read-only browser (`web/`), a separate TypeScript stack (Node/tRPC/Prisma + React SPA) reading the same database

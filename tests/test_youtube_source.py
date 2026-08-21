@@ -1,9 +1,12 @@
+import pytest
+
 from sync_master.sources.youtube import (
     PlaylistInfo,
     VideoItem,
     diff_new_videos,
     fetch_my_playlists,
     fetch_playlist_items,
+    rename_playlist,
 )
 
 
@@ -153,3 +156,56 @@ def test_fetch_my_playlists_follows_pagination_across_pages():
     playlists = fetch_my_playlists(youtube_client=client)
 
     assert [p.playlist_id for p in playlists] == ["PL1", "PL2"]
+
+
+class _FakeExecutable:
+    def __init__(self, result):
+        self._result = result
+
+    def execute(self):
+        return self._result
+
+
+class FakeRenamePlaylistsResource:
+    def __init__(self, existing_snippet):
+        self._existing_snippet = existing_snippet
+        self.update_calls = []
+
+    def list(self, part=None, id=None):
+        if self._existing_snippet is None:
+            return _FakeExecutable({"items": []})
+        return _FakeExecutable({"items": [{"id": id, "snippet": dict(self._existing_snippet)}]})
+
+    def update(self, part=None, body=None):
+        self.update_calls.append(body)
+        return _FakeExecutable(body)
+
+
+class FakeRenameClient:
+    def __init__(self, existing_snippet):
+        self.playlists_resource = FakeRenamePlaylistsResource(existing_snippet)
+
+    def playlists(self):
+        return self.playlists_resource
+
+
+def test_rename_playlist_updates_title_while_preserving_other_snippet_fields():
+    client = FakeRenameClient(
+        existing_snippet={"title": "OLD-NAME[!]", "description": "keep me", "tags": ["a", "b"]}
+    )
+
+    rename_playlist("PL123", "NEW-NAME[!]", youtube_client=client)
+
+    assert client.playlists_resource.update_calls == [
+        {
+            "id": "PL123",
+            "snippet": {"title": "NEW-NAME[!]", "description": "keep me", "tags": ["a", "b"]},
+        }
+    ]
+
+
+def test_rename_playlist_raises_when_playlist_not_found():
+    client = FakeRenameClient(existing_snippet=None)
+
+    with pytest.raises(ValueError):
+        rename_playlist("PL_MISSING", "NEW-NAME", youtube_client=client)

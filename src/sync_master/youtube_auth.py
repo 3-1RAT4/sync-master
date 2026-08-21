@@ -1,6 +1,6 @@
 import os
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/youtube"]  # read/write - youtube.readonly can't rename playlists
 
 
 def build_oauth_client():

@@ -98,6 +98,18 @@ def perform_run(
                         "actions": {},
                     }
 
+                # Refresh title/published_at for videos we already knew about too -
+                # a video's owner can rename it after we've discovered it (not
+                # something we control), and a stale cached title here would feed
+                # wrong text into spotify_sync's search query, or a stale filename
+                # into download/transcript. actions (processing status) is left
+                # untouched - this only refreshes metadata, never reprocesses.
+                for item in fetched:
+                    video = state["videos"].get(item.video_id)
+                    if video is not None:
+                        video["title"] = item.title
+                        video["published_at"] = item.published_at
+
             for video_id, video in state["videos"].items():
                 parsed = parsed_by_playlist_id.get(video["playlist_id"])
                 if parsed is None:

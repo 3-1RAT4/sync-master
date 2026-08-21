@@ -199,6 +199,35 @@ def test_perform_run_appends_summary_entry_to_run_log(tmp_path):
     ]
 
 
+def test_perform_run_refreshes_title_for_already_known_videos(tmp_path):
+    # A video's owner can rename it after we've already discovered it - the
+    # cached title has to stay fresh (it feeds spotify_sync's search query
+    # and download/transcript's filename), without touching actions.
+    repo = FakeRepo()
+    repo.seed_video("v1", "PL123", "Old Title", "2026-01-01", actions={"download": "done"})
+
+    def fake_fetch_playlists(client):
+        return [PlaylistInfo(playlist_id="PL123", title="HUMAN-MUSIC-PARTY[!]")]
+
+    def fake_fetch_items(playlist_id, youtube_client=None):
+        return [VideoItem(video_id="v1", title="New Title", published_at="2026-02-02", playlist_id=playlist_id)]
+
+    _run(
+        tmp_path,
+        repo,
+        dry_run=False,
+        fetch_playlists_fn=fake_fetch_playlists,
+        fetch_items_fn=fake_fetch_items,
+        youtube_client_factory=lambda: "fake-client",
+        action_runner=lambda **kwargs: None,
+    )
+
+    video = repo.state["videos"]["v1"]
+    assert video["title"] == "New Title"
+    assert video["published_at"] == "2026-02-02"
+    assert video["actions"] == {"download": {"status": "done"}}
+
+
 def test_perform_run_dry_run_does_not_save_state(tmp_path):
     repo = FakeRepo()
     saved = []
