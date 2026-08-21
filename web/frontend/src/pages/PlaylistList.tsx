@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { trpc } from "../trpc";
 
@@ -53,6 +53,30 @@ function buildTree(playlists: Playlist[]): TreeNode {
   return root;
 }
 
+function collectFolderPaths(node: TreeNode, out: string[]): void {
+  if (node.children.size === 0) return;
+  if (node.path) out.push(node.path);
+  for (const child of node.children.values()) collectFolderPaths(child, out);
+}
+
+type Filter = { text: string; onlyTracked: boolean };
+
+function playlistMatches(p: Playlist, filter: Filter): boolean {
+  if (filter.onlyTracked && p.actions.length === 0) return false;
+  if (filter.text && !p.title.toLowerCase().includes(filter.text)) return false;
+  return true;
+}
+
+// Does any playlist in this node's subtree pass the filter? Used both to
+// hide whole empty branches and to force-expand branches that do match.
+function subtreeHasMatch(node: TreeNode, filter: Filter): boolean {
+  if (node.playlists.some((p) => playlistMatches(p, filter))) return true;
+  for (const child of node.children.values()) {
+    if (subtreeHasMatch(child, filter)) return true;
+  }
+  return false;
+}
+
 const INDENT_PX = 18;
 
 function PlaylistRow({ playlist, label, depth }: { playlist: Playlist; label: string; depth: number }) {
@@ -79,20 +103,45 @@ function PlaylistRow({ playlist, label, depth }: { playlist: Playlist; label: st
   );
 }
 
-function FolderRow({ node, depth }: { node: TreeNode; depth: number }) {
-  const [expanded, setExpanded] = useState(true);
+function FolderRow({
+  node,
+  depth,
+  filter,
+  filterActive,
+  collapsedPaths,
+  onToggle,
+}: {
+  node: TreeNode;
+  depth: number;
+  filter: Filter;
+  filterActive: boolean;
+  collapsedPaths: Set<string>;
+  onToggle: (path: string) => void;
+}) {
   const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name));
 
   if (children.length === 0) {
     // Nothing to expand/collapse - this path is just its playlist(s).
     return (
       <>
-        {node.playlists.map((p) => (
-          <PlaylistRow key={p.id.toString()} playlist={p} label={node.name} depth={depth} />
-        ))}
+        {node.playlists
+          .filter((p) => playlistMatches(p, filter))
+          .map((p) => (
+            <PlaylistRow key={p.id.toString()} playlist={p} label={node.name} depth={depth} />
+          ))}
       </>
     );
   }
+
+  // A filter prunes whole branches with no matches anywhere inside them,
+  // and force-expands whatever's left so a match is never hidden behind a
+  // collapsed folder. With no filter active, expansion follows the
+  // explicit collapsed-paths state (toolbar buttons or individual clicks).
+  if (filterActive && !subtreeHasMatch(node, filter)) return null;
+  const expanded = filterActive || !collapsedPaths.has(node.path);
+
+  const visiblePlaylists = node.playlists.filter((p) => playlistMatches(p, filter));
+  const visibleChildren = filterActive ? children.filter((c) => subtreeHasMatch(c, filter)) : children;
 
   return (
     <>
@@ -100,7 +149,7 @@ function FolderRow({ node, depth }: { node: TreeNode; depth: number }) {
         type="button"
         className="tree-row tree-row-folder"
         style={{ paddingLeft: `${depth * INDENT_PX}px` }}
-        onClick={() => setExpanded((e) => !e)}
+        onClick={() => onToggle(node.path)}
         aria-expanded={expanded}
       >
         <span className={`tree-gutter tree-chevron ${expanded ? "expanded" : ""}`} aria-hidden>
@@ -110,11 +159,19 @@ function FolderRow({ node, depth }: { node: TreeNode; depth: number }) {
       </button>
       {expanded && (
         <>
-          {node.playlists.map((p) => (
+          {visiblePlaylists.map((p) => (
             <PlaylistRow key={p.id.toString()} playlist={p} label={node.name} depth={depth + 1} />
           ))}
-          {children.map((child) => (
-            <FolderRow key={child.path} node={child} depth={depth + 1} />
+          {visibleChildren.map((child) => (
+            <FolderRow
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              filter={filter}
+              filterActive={filterActive}
+              collapsedPaths={collapsedPaths}
+              onToggle={onToggle}
+            />
           ))}
         </>
       )}
@@ -124,13 +181,44 @@ function FolderRow({ node, depth }: { node: TreeNode; depth: number }) {
 
 export default function PlaylistList() {
   const { data: playlists, isLoading, error } = trpc.playlists.list.useQuery();
+  const [filterText, setFilterText] = useState("");
+  const [onlyTracked, setOnlyTracked] = useState(false);
+  const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
+
+  const tree = useMemo(() => (playlists ? buildTree(playlists) : null), [playlists]);
 
   if (isLoading) return <p>Loading playlists…</p>;
   if (error) return <p className="error">Failed to load playlists: {error.message}</p>;
-  if (!playlists) return null;
+  if (!playlists || !tree) return null;
+  // TS doesn't carry the null-narrowing above into the closures below -
+  // rebind to a variable whose type reflects that narrowing.
+  const knownTree: TreeNode = tree;
 
-  const tree = buildTree(playlists);
+  const filter: Filter = { text: filterText.trim().toLowerCase(), onlyTracked };
+  const filterActive = filter.text !== "" || filter.onlyTracked;
+
   const topLevel = [...tree.children.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const visibleTopLevel = filterActive ? topLevel.filter((n) => subtreeHasMatch(n, filter)) : topLevel;
+  const matchCount = filterActive ? playlists.filter((p) => playlistMatches(p, filter)).length : playlists.length;
+
+  function toggleFolder(path: string) {
+    setCollapsedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  function expandAll() {
+    setCollapsedPaths(new Set());
+  }
+
+  function collapseAll() {
+    const allFolderPaths: string[] = [];
+    collectFolderPaths(knownTree, allFolderPaths);
+    setCollapsedPaths(new Set(allFolderPaths));
+  }
 
   return (
     <div className="explorer-page">
@@ -141,10 +229,47 @@ export default function PlaylistList() {
         badges show which processing actions run for that playlist - no badges means it's cataloged but not
         actively processed.
       </p>
+      <div className="explorer-toolbar">
+        <input
+          type="search"
+          className="filter-input"
+          placeholder="Filter by name…"
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+        />
+        <label className="toolbar-toggle">
+          <input type="checkbox" checked={onlyTracked} onChange={(e) => setOnlyTracked(e.target.checked)} />
+          Tracked only
+        </label>
+        {filterActive && (
+          <span className="toolbar-count">
+            {matchCount} match{matchCount === 1 ? "" : "es"}
+          </span>
+        )}
+        <div className="toolbar-spacer" />
+        <button type="button" className="toolbar-btn" onClick={expandAll}>
+          Expand all
+        </button>
+        <button type="button" className="toolbar-btn" onClick={collapseAll}>
+          Collapse all
+        </button>
+      </div>
       <div className="tree">
-        {topLevel.map((node) => (
-          <FolderRow key={node.path} node={node} depth={0} />
-        ))}
+        {visibleTopLevel.length === 0 ? (
+          <p className="tree-empty">No playlists match this filter.</p>
+        ) : (
+          visibleTopLevel.map((node) => (
+            <FolderRow
+              key={node.path}
+              node={node}
+              depth={0}
+              filter={filter}
+              filterActive={filterActive}
+              collapsedPaths={collapsedPaths}
+              onToggle={toggleFolder}
+            />
+          ))
+        )}
       </div>
     </div>
   );
