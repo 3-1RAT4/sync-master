@@ -26,6 +26,10 @@ SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
 # Optional: only needed for speaker diarization (the "diarization" extra)
 HUGGINGFACE_TOKEN=
+# Optional: the web UI's read-only role (see docs/web-ui.md). When set,
+# downloaded videos grant it read access so the UI can stream them - Postgres
+# large objects have their own ACLs and table grants don't cover them.
+WEB_READONLY_ROLE=
 # Postgres connection string - see docker-compose.yml for a local dev instance
 DATABASE_URL=postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb
 """

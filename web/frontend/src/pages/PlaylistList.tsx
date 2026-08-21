@@ -1,9 +1,17 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  derivePathSegments,
+  SYSTEMS,
+  systemForSegments,
+  UNCLASSIFIED_PIGMENT,
+  youtubePlaylistUrl,
+} from "../taxonomy";
 import { trpc } from "../trpc";
 
 type Playlist = {
   id: bigint;
+  external_id: string;
   title: string;
   actions: string[];
   item_count: number | null;
@@ -12,37 +20,30 @@ type Playlist = {
 type TreeNode = {
   name: string;
   path: string;
+  segments: string[];
   children: Map<string, TreeNode>;
   playlists: Playlist[];
 };
 
-// Mirrors src/sync_master/playlist_naming.py's folder-path derivation
-// (strip a trailing [...] suffix if present, split the rest on "-"), but
-// without requiring a *recognized* flag inside it - every playlist gets a
-// tree position this way, not just the ones the processing pipeline tracks.
-// A playlist with no dashes (and no brackets) just becomes a single
-// top-level leaf, which is the correct degenerate case.
-const SUFFIX_RE = /^(.*)\[[^\]]*\]$/;
-
-function derivePathSegments(title: string): string[] {
-  const match = title.match(SUFFIX_RE);
-  const pathPart = match ? match[1] : title;
-  return pathPart.split("-").filter(Boolean);
-}
-
 function buildTree(playlists: Playlist[]): TreeNode {
-  const root: TreeNode = { name: "", path: "", children: new Map(), playlists: [] };
+  const root: TreeNode = { name: "", path: "", segments: [], children: new Map(), playlists: [] };
 
   for (const playlist of playlists) {
     const segments = derivePathSegments(playlist.title);
 
     let node = root;
-    let pathSoFar = "";
+    const soFar: string[] = [];
     for (const segment of segments) {
-      pathSoFar = pathSoFar ? `${pathSoFar}/${segment}` : segment;
+      soFar.push(segment);
       let child = node.children.get(segment);
       if (!child) {
-        child = { name: segment, path: pathSoFar, children: new Map(), playlists: [] };
+        child = {
+          name: segment,
+          path: soFar.join("/"),
+          segments: [...soFar],
+          children: new Map(),
+          playlists: [],
+        };
         node.children.set(segment, child);
       }
       node = child;
@@ -59,10 +60,14 @@ function collectFolderPaths(node: TreeNode, out: string[]): void {
   for (const child of node.children.values()) collectFolderPaths(child, out);
 }
 
-type Filter = { text: string; onlyTracked: boolean };
+type Filter = { text: string; onlyTracked: boolean; system: string | null };
 
 function playlistMatches(p: Playlist, filter: Filter): boolean {
   if (filter.onlyTracked && p.actions.length === 0) return false;
+  if (filter.system) {
+    const system = systemForSegments(derivePathSegments(p.title));
+    if ((system?.key ?? null) !== filter.system) return false;
+  }
   if (filter.text && !p.title.toLowerCase().includes(filter.text)) return false;
   return true;
 }
@@ -77,29 +82,56 @@ function subtreeHasMatch(node: TreeNode, filter: Filter): boolean {
   return false;
 }
 
-const INDENT_PX = 18;
-
-function PlaylistRow({ playlist, label, depth }: { playlist: Playlist; label: string; depth: number }) {
+/** One hairline per ancestor, tinted by the row's system. */
+function Rails({ depth }: { depth: number }) {
+  if (depth === 0) return null;
   return (
-    <Link
-      to={`/playlists/${playlist.id}`}
-      className="tree-row tree-row-file"
-      style={{ paddingLeft: `${depth * INDENT_PX}px` }}
-      title={playlist.title}
-    >
-      <span className="tree-gutter" aria-hidden>
-        ▶
-      </span>
-      <span className="tree-label">{label}</span>
-      <span className="tree-meta">
-        {playlist.actions.map((a) => (
-          <span key={a} className="badge">
-            {a}
-          </span>
-        ))}
-        {playlist.item_count !== null && <span className="item-count">{playlist.item_count} videos</span>}
-      </span>
-    </Link>
+    <span className="rails" aria-hidden>
+      {Array.from({ length: depth }, (_, i) => (
+        <span key={i} className="rail" />
+      ))}
+    </span>
+  );
+}
+
+function PlaylistRow({
+  playlist,
+  label,
+  depth,
+  pigment,
+}: {
+  playlist: Playlist;
+  label: string;
+  depth: number;
+  pigment: string;
+}) {
+  return (
+    <div className="row row-leaf" style={{ ["--pig" as string]: pigment }}>
+      <Link to={`/playlists/${playlist.id}`} className="row-main" title={playlist.title}>
+        <Rails depth={depth} />
+        <span className="row-mark row-mark-leaf" aria-hidden />
+        <span className="row-label">{label}</span>
+        <span className="row-tail">
+          {playlist.actions.map((a) => (
+            <span key={a} className="flag mono">
+              {a}
+            </span>
+          ))}
+          {playlist.item_count !== null && (
+            <span className="count mono">{playlist.item_count.toLocaleString()}</span>
+          )}
+        </span>
+      </Link>
+      <a
+        className="row-out mono"
+        href={youtubePlaylistUrl(playlist.external_id)}
+        target="_blank"
+        rel="noreferrer"
+        title="Open on YouTube"
+      >
+        YT
+      </a>
+    </div>
   );
 }
 
@@ -119,6 +151,12 @@ function FolderRow({
   onToggle: (path: string) => void;
 }) {
   const children = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const system = systemForSegments(node.segments);
+  const pigment = system?.pigment ?? UNCLASSIFIED_PIGMENT;
+  // The segment that *names* a system wears its pigment; everything below it
+  // inherits the rail colour but keeps bone text, so the classification reads
+  // once per branch instead of shouting on every row.
+  const isSystemHead = system !== null && node.name.toUpperCase() === system.key;
 
   if (children.length === 0) {
     // Nothing to expand/collapse - this path is just its playlist(s).
@@ -127,7 +165,13 @@ function FolderRow({
         {node.playlists
           .filter((p) => playlistMatches(p, filter))
           .map((p) => (
-            <PlaylistRow key={p.id.toString()} playlist={p} label={node.name} depth={depth} />
+            <PlaylistRow
+              key={p.id.toString()}
+              playlist={p}
+              label={node.name}
+              depth={depth}
+              pigment={pigment}
+            />
           ))}
       </>
     );
@@ -145,22 +189,28 @@ function FolderRow({
 
   return (
     <>
-      <button
-        type="button"
-        className="tree-row tree-row-folder"
-        style={{ paddingLeft: `${depth * INDENT_PX}px` }}
-        onClick={() => onToggle(node.path)}
-        aria-expanded={expanded}
-      >
-        <span className={`tree-gutter tree-chevron ${expanded ? "expanded" : ""}`} aria-hidden>
-          ▸
-        </span>
-        <span className="tree-label tree-label-folder">{node.name}</span>
-      </button>
+      <div className="row row-branch" style={{ ["--pig" as string]: pigment }}>
+        <button type="button" className="row-main" onClick={() => onToggle(node.path)} aria-expanded={expanded}>
+          <Rails depth={depth} />
+          <span className={`row-mark row-chevron ${expanded ? "is-open" : ""}`} aria-hidden>
+            <svg viewBox="0 0 12 12" width="9" height="9">
+              <path d="M4 2.5 L8 6 L4 9.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          </span>
+          <span className={`row-label row-label-branch ${isSystemHead ? "is-system" : ""}`}>{node.name}</span>
+          {!expanded && <span className="row-tail count mono">{visibleChildren.length + visiblePlaylists.length}</span>}
+        </button>
+      </div>
       {expanded && (
         <>
           {visiblePlaylists.map((p) => (
-            <PlaylistRow key={p.id.toString()} playlist={p} label={node.name} depth={depth + 1} />
+            <PlaylistRow
+              key={p.id.toString()}
+              playlist={p}
+              label={node.name}
+              depth={depth + 1}
+              pigment={pigment}
+            />
           ))}
           {visibleChildren.map((child) => (
             <FolderRow
@@ -183,23 +233,35 @@ export default function PlaylistList() {
   const { data: playlists, isLoading, error } = trpc.playlists.list.useQuery();
   const [filterText, setFilterText] = useState("");
   const [onlyTracked, setOnlyTracked] = useState(false);
+  const [system, setSystem] = useState<string | null>(null);
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
 
   const tree = useMemo(() => (playlists ? buildTree(playlists) : null), [playlists]);
 
-  if (isLoading) return <p>Loading playlists…</p>;
-  if (error) return <p className="error">Failed to load playlists: {error.message}</p>;
+  const tallies = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of playlists ?? []) {
+      const key = systemForSegments(derivePathSegments(p.title))?.key ?? "";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [playlists]);
+
+  if (isLoading) return <p className="state">Loading the catalog…</p>;
+  if (error) return <p className="state state-error">Couldn't load the catalog. {error.message}</p>;
   if (!playlists || !tree) return null;
   // TS doesn't carry the null-narrowing above into the closures below -
   // rebind to a variable whose type reflects that narrowing.
   const knownTree: TreeNode = tree;
 
-  const filter: Filter = { text: filterText.trim().toLowerCase(), onlyTracked };
-  const filterActive = filter.text !== "" || filter.onlyTracked;
+  const filter: Filter = { text: filterText.trim().toLowerCase(), onlyTracked, system };
+  const filterActive = filter.text !== "" || filter.onlyTracked || filter.system !== null;
 
   const topLevel = [...tree.children.values()].sort((a, b) => a.name.localeCompare(b.name));
   const visibleTopLevel = filterActive ? topLevel.filter((n) => subtreeHasMatch(n, filter)) : topLevel;
-  const matchCount = filterActive ? playlists.filter((p) => playlistMatches(p, filter)).length : playlists.length;
+  const matchCount = playlists.filter((p) => playlistMatches(p, filter)).length;
+  const trackedCount = playlists.filter((p) => p.actions.length > 0).length;
+  const videoCount = playlists.reduce((sum, p) => sum + (p.item_count ?? 0), 0);
 
   function toggleFolder(path: string) {
     setCollapsedPaths((prev) => {
@@ -210,8 +272,10 @@ export default function PlaylistList() {
     });
   }
 
-  function expandAll() {
-    setCollapsedPaths(new Set());
+  function clearFilters() {
+    setFilterText("");
+    setOnlyTracked(false);
+    setSystem(null);
   }
 
   function collapseAll() {
@@ -221,42 +285,89 @@ export default function PlaylistList() {
   }
 
   return (
-    <div className="explorer-page">
-      <h1>Playlists ({playlists.length})</h1>
-      <p className="hint">
-        Folder structure derived from each playlist's name (dash-separated segments, e.g.{" "}
-        <code>HUMAN-HEARTH-ART-DANCE</code> becomes <code>HUMAN/HEARTH/ART/DANCE</code>). Click a row to open it;
-        badges show which processing actions run for that playlist - no badges means it's cataloged but not
-        actively processed.
-      </p>
-      <div className="explorer-toolbar">
-        <input
-          type="search"
-          className="filter-input"
-          placeholder="Filter by name…"
-          value={filterText}
-          onChange={(e) => setFilterText(e.target.value)}
-        />
-        <label className="toolbar-toggle">
+    <div className="plate">
+      <header className="plate-head">
+        <p className="eyebrow">
+          YouTube · {playlists.length} playlists · {videoCount.toLocaleString()} videos ·{" "}
+          {trackedCount} tracked
+        </p>
+
+        {/* The legend is the hero: it names the systems the library is
+            organised into, teaches the rail colours used below, and doubles
+            as the branch filter. */}
+        <div className="legend">
+          {SYSTEMS.map((s, i) => {
+            const count = tallies.get(s.key) ?? 0;
+            const active = system === s.key;
+            return (
+              <button
+                key={s.key}
+                type="button"
+                className={`legend-item ${active ? "is-active" : ""} ${count === 0 ? "is-empty" : ""}`}
+                style={{ ["--pig" as string]: s.pigment, ["--i" as string]: i }}
+                onClick={() => setSystem(active ? null : s.key)}
+                aria-pressed={active}
+                disabled={count === 0}
+              >
+                <span className="legend-name">{s.label}</span>
+                <span className="legend-count mono">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <p className="plate-note">
+          Names carry the tree: <code>HUMAN-HEARTH-ART-DANCE</code> nests as HUMAN / HEARTH / ART /
+          DANCE. Rails down the left mark which system a branch belongs to. A playlist with no flags is
+          catalogued but not processed.
+        </p>
+      </header>
+
+      <div className="toolbar">
+        <div className="field">
+          <label htmlFor="playlist-filter" className="eyebrow">
+            Find
+          </label>
+          <input
+            id="playlist-filter"
+            type="search"
+            className="field-input"
+            placeholder="Filter by name"
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+          />
+        </div>
+        <label className="toggle">
           <input type="checkbox" checked={onlyTracked} onChange={(e) => setOnlyTracked(e.target.checked)} />
-          Tracked only
+          <span>Tracked only</span>
         </label>
         {filterActive && (
-          <span className="toolbar-count">
-            {matchCount} match{matchCount === 1 ? "" : "es"}
-          </span>
+          <>
+            <span className="toolbar-count mono">
+              {matchCount} of {playlists.length}
+            </span>
+            <button type="button" className="btn btn-quiet" onClick={clearFilters}>
+              Clear
+            </button>
+          </>
         )}
-        <div className="toolbar-spacer" />
-        <button type="button" className="toolbar-btn" onClick={expandAll}>
+        <div className="toolbar-gap" />
+        <button type="button" className="btn" onClick={() => setCollapsedPaths(new Set())}>
           Expand all
         </button>
-        <button type="button" className="toolbar-btn" onClick={collapseAll}>
+        <button type="button" className="btn" onClick={collapseAll}>
           Collapse all
         </button>
       </div>
+
       <div className="tree">
         {visibleTopLevel.length === 0 ? (
-          <p className="tree-empty">No playlists match this filter.</p>
+          <div className="tree-empty">
+            <p>No playlist matches those filters.</p>
+            <button type="button" className="btn" onClick={clearFilters}>
+              Clear filters
+            </button>
+          </div>
         ) : (
           visibleTopLevel.map((node) => (
             <FolderRow

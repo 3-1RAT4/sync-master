@@ -1,4 +1,7 @@
 import contextlib
+import logging
+import os
+import re
 from pathlib import Path
 
 from sqlalchemy import delete, func, select, text
@@ -21,6 +24,37 @@ from sync_master.db.models import (
 _STATE_ROW_ID = 1
 
 _ADVISORY_LOCK_KEY = "sync-master-run"
+
+_logger = logging.getLogger(__name__)
+
+# Postgres large objects carry their own ACLs, entirely separate from table
+# grants - a role with SELECT on video_files still gets "permission denied for
+# large object N". The web UI streams these blobs as a read-only role, so it
+# needs an explicit grant on each one. Every save creates a *new* OID (the
+# lo_manage trigger unlinks the superseded object), so this runs on every write.
+_WEB_ROLE_ENV = "WEB_READONLY_ROLE"
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+
+
+def _grant_large_object_read(session: Session, oid: int) -> None:
+    role = os.environ.get(_WEB_ROLE_ENV, "").strip()
+    if not role:
+        return
+    if not _IDENT_RE.fullmatch(role):
+        _logger.warning("%s=%r is not a valid role name; skipping large object grant", _WEB_ROLE_ENV, role)
+        return
+
+    # Checked rather than caught: a failed GRANT would abort the surrounding
+    # transaction and take the video_files row down with it. A missing web role
+    # is a normal state (nobody has provisioned the UI yet), not an error.
+    exists = session.execute(text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": role}).scalar()
+    if not exists:
+        _logger.warning("%s=%s does not exist; skipping large object grant", _WEB_ROLE_ENV, role)
+        return
+
+    # oid is an integer we just produced and role is validated above, so this
+    # interpolation is safe - GRANT accepts neither as a bind parameter.
+    session.execute(text(f'GRANT SELECT ON LARGE OBJECT {int(oid)} TO "{role}"'))
 
 
 class LockHeldError(Exception):
@@ -210,6 +244,7 @@ def save_video_file(
         },
     )
     session.execute(stmt)
+    _grant_large_object_read(session, large_object.oid)
     session.commit()
 
 

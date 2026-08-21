@@ -60,16 +60,34 @@ const videosRouter = router({
       where: { id: input.id },
       include: {
         playlists: { select: { id: true, title: true, folder_path: true, leaf_name: true } },
-        transcripts: { select: { source: true, text: true, created_at: true } },
+        transcripts: { select: { id: true, source: true, text: true, created_at: true } },
         summaries: { select: { content: true, llm_provider: true, llm_model: true, created_at: true } },
         spotify_syncs: { select: { spotify_track_id: true, spotify_playlist_id: true, matched_via: true } },
+        // Presence is what the UI needs - whether to render a player at all.
+        // The bytes come from /api/videos/:externalId/stream (videoStream.ts).
+        video_files: { select: { size_bytes: true, content_type: true, filename: true } },
       },
     });
     if (!video) return null;
 
     const actions = await getProcessingStatus(video.external_id);
 
-    return { ...video, actions };
+    // transcripts.text carries the words but only each turn's *start* time
+    // (see src/sync_master/tools/diarize.py:format_as_conversation). The
+    // diarization segments carry the end times, so the last turn's length -
+    // and therefore the true length of the recording - is only knowable from
+    // here. The reader needs it to scale its timeline.
+    let transcript_seconds: number | null = null;
+    if (video.transcripts) {
+      const span = await prisma.transcript_segments.aggregate({
+        where: { transcript_id: video.transcripts.id },
+        _max: { end_seconds: true },
+      });
+      // Prisma hands back a Decimal, which superjson can't put on the wire.
+      transcript_seconds = span._max.end_seconds === null ? null : Number(span._max.end_seconds);
+    }
+
+    return { ...video, actions, transcript_seconds };
   }),
 });
 

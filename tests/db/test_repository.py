@@ -129,6 +129,50 @@ def test_save_video_file_round_trips_bytes(db_session):
     assert repository.get_video_file_content(db_session, "v1") == b"fake video bytes"
 
 
+def test_save_video_file_grants_the_web_role_read_access(db_session, monkeypatch):
+    """The web UI streams these blobs as a read-only role, and large objects
+    have their own ACLs that table grants don't cover - so every write has to
+    grant read on the new OID or the player 404s on freshly downloaded videos.
+    """
+    _make_video(db_session)
+    db_session.execute(repository.text("CREATE ROLE test_web_reader NOLOGIN"))
+    monkeypatch.setenv("WEB_READONLY_ROLE", "test_web_reader")
+
+    try:
+        repository.save_video_file(
+            db_session, "v1", filename="a.mp4", content_type="video/mp4", content=b"bytes"
+        )
+
+        oid = db_session.execute(
+            repository.select(repository.VideoFile.content_oid)
+            .join(repository.Video)
+            .where(repository.Video.external_id == "v1")
+        ).scalar_one()
+        acl = db_session.execute(
+            repository.text("SELECT lomacl::text FROM pg_largeobject_metadata WHERE oid = :oid"), {"oid": oid}
+        ).scalar_one()
+        assert "test_web_reader=r/" in acl
+    finally:
+        db_session.rollback()
+        # save_video_file commits, so the grant outlives a rollback - and a role
+        # holding privileges on a large object can't be dropped until they're
+        # released.
+        db_session.execute(repository.text("DROP OWNED BY test_web_reader"))
+        db_session.execute(repository.text("DROP ROLE IF EXISTS test_web_reader"))
+        db_session.commit()
+
+
+def test_save_video_file_skips_the_grant_when_the_role_is_missing(db_session, monkeypatch):
+    """A missing web role is normal (nobody has provisioned the UI yet). It
+    must not abort the transaction and take the download down with it."""
+    _make_video(db_session)
+    monkeypatch.setenv("WEB_READONLY_ROLE", "role_that_does_not_exist")
+
+    repository.save_video_file(db_session, "v1", filename="a.mp4", content_type="video/mp4", content=b"bytes")
+
+    assert repository.get_video_file_content(db_session, "v1") == b"bytes"
+
+
 def test_save_video_file_replacing_content_does_not_leak_the_old_large_object(db_session):
     _make_video(db_session)
 

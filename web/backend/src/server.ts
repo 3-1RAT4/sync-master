@@ -3,6 +3,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import cors from "cors";
 import express from "express";
 import { appRouter } from "./router.js";
+import { videoStreamRouter } from "./videoStream.js";
 
 const app = express();
 
@@ -13,6 +14,10 @@ const app = express();
 app.use(cors());
 
 app.use("/api/trpc", createExpressMiddleware({ router: appRouter }));
+
+// Binary video streaming can't go through tRPC - separate path, and no body
+// parser in front of it.
+app.use("/api", videoStreamRouter);
 
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, "127.0.0.1", () => {
