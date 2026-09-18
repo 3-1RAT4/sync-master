@@ -327,6 +327,32 @@ class VaultIndex:
         self.entries[(playlist_id, video_id)] = folder
 
 
+def _note_stem(folder: Path) -> str:
+    """The N.Title prefix a folder's files carry - read from the video note
+    itself, because a parked folder's name no longer says."""
+    for note in folder.glob("*.md"):
+        if not note.name.endswith((".transcript.md", ".summary.md")):
+            return note.stem
+    return folder.name
+
+
+def _evict_occupant(index: VaultIndex, target: Path, video_id: str) -> None:
+    """If `target` is already a different video's folder, park that folder
+    aside. Happens when two videos share a title - two "Deleted video"
+    placeholders trading positions, say - and one's new place is the other's
+    old one. The occupant is moved to its own new position when its turn
+    comes; if it turns out to be stale (gone from the playlist) it stays
+    parked under a name no real video can have, visible rather than lost."""
+    if not target.is_dir():
+        return
+    occupant = read_frontmatter(target / f"{_note_stem(target)}.md")
+    if occupant.get("youtube_id") in (None, video_id):
+        return  # ours already, or an empty shell
+    parked = target.with_name(f"{target.name}.moving-{occupant['youtube_id']}")
+    target.rename(parked)
+    index.record(str(occupant.get("playlist_id", "")), str(occupant["youtube_id"]), parked)
+
+
 @dataclass(frozen=True)
 class Placement:
     folder: VideoFolder
@@ -343,6 +369,7 @@ def place_video(index: VaultIndex, playlist: PlaylistInfo, item: VideoItem) -> P
     existing = index.find(playlist.playlist_id, item.video_id)
 
     if existing is None or not existing.is_dir():
+        _evict_occupant(index, target, item.video_id)
         target.mkdir(parents=True, exist_ok=True)
         if not vf.note.exists():
             vf.note.write_text(new_note(item, playlist, vf), encoding="utf-8")
@@ -352,8 +379,11 @@ def place_video(index: VaultIndex, playlist: PlaylistInfo, item: VideoItem) -> P
         return Placement(vf, created=existing is None, moved_from=None)
 
     if existing.resolve() != target.resolve():
-        old_name = existing.name
+        # The prefix on the files is whatever the note is called, which is
+        # not always the folder's name (see the eviction below).
+        old_name = _note_stem(existing)
         target.parent.mkdir(parents=True, exist_ok=True)
+        _evict_occupant(index, target, item.video_id)
         existing.rename(target)
         # The prefix is on every file, so they move with the folder's name.
         for path in target.iterdir():

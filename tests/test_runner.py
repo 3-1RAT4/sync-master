@@ -133,6 +133,11 @@ def test_dry_run_writes_nothing_and_reports_what_would_be_created(env):
     assert not (config / "state.json").exists()
     assert calls[0]["dry_run"] is True
 
+    # A dry run must also count pending moves, not only creations.
+    _run(env, [FLAGGED], {"PL1": [_item("a", "Ep one", position=0), _item("b", "Ep two", position=1)]})
+    report, _, _, _ = _run(env, [FLAGGED], {"PL1": [_item("b", "Ep two", position=0), _item("a", "Ep one", position=1)]}, dry_run=True)
+    assert (report.created, report.moved) == (0, 2)
+
 
 def test_a_held_lock_refuses_to_run(env):
     config, _ = env

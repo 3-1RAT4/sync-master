@@ -65,11 +65,13 @@ def perform_run(
 
                 if dry_run:
                     existing = index.find(playlist.playlist_id, item.video_id)
+                    name = entry_name(item.position, item.title)
+                    target = playlist_dir(root, playlist.title) / name
                     if existing is None:
                         report.created += 1
-                        name = entry_name(item.position, item.title)
-                        vf = VideoFolder(playlist_dir(root, playlist.title) / name, name)
+                        vf = VideoFolder(target, name)
                     else:
+                        report.moved += existing.resolve() != target.resolve()
                         vf = VideoFolder(existing, existing.name)
                 else:
                     placement = place_video(index, playlist, item)

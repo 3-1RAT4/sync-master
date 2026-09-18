@@ -237,3 +237,64 @@ def test_outputs_land_in_the_folder_and_has_output_reflects_the_files(tmp_path):
     assert "youtube_id: abc" in vf.transcript.read_text()
     assert read_frontmatter(vf.note)["spotify_track_uri"] == "spotify:track:1"
     assert read_transcript_text(vf.transcript) == "[00:00:01] SPEAKER_00: hi"
+
+
+def test_two_videos_with_the_same_title_can_trade_positions(tmp_path):
+    """Two "Deleted video" placeholders swapping positions: the second's
+    target is occupied by the first until the first has moved."""
+    root = tmp_path / "v"
+    index = VaultIndex(root)
+    a = place_video(index, PLAYLIST, _item(video_id="a", title="Deleted video", position=0))
+    b = place_video(index, PLAYLIST, _item(video_id="b", title="Deleted video", position=1))
+    a.folder.video.write_bytes(b"A"); b.folder.video.write_bytes(b"B")
+
+    # Swap: processed in the new order, so b (now at 1.) is placed first while
+    # a still sits in "1.Deleted video".
+    index = VaultIndex.scan(root)
+    moved_b = place_video(index, PLAYLIST, _item(video_id="b", title="Deleted video", position=0))
+    moved_a = place_video(index, PLAYLIST, _item(video_id="a", title="Deleted video", position=1))
+
+    folders = sorted(p.name for p in (root / "HUMAN" / "PODCASTS").iterdir())
+    assert folders == ["1.Deleted video", "2.Deleted video"]  # nothing parked, nothing lost
+    assert moved_b.folder.video.read_bytes() == b"B" and moved_a.folder.video.read_bytes() == b"A"
+    assert read_frontmatter(moved_a.folder.note)["youtube_id"] == "a"
+    assert sorted(p.name for p in moved_a.folder.folder.iterdir()) == ["2.Deleted video.md", "2.Deleted video.mp4"]
+
+
+def test_a_stale_occupant_is_parked_visibly_not_deleted(tmp_path):
+    root = tmp_path / "v"
+    index = VaultIndex(root)
+    place_video(index, PLAYLIST, _item(video_id="gone", title="Deleted video", position=0))
+    place_video(index, PLAYLIST, _item(video_id="stays", title="Deleted video", position=3))
+
+    # "gone" left the playlist; "stays" moves into its old slot and nothing ever places "gone" again.
+    place_video(VaultIndex.scan(root), PLAYLIST, _item(video_id="stays", title="Deleted video", position=0))
+
+    folders = sorted(p.name for p in (root / "HUMAN" / "PODCASTS").iterdir())
+    assert folders == ["1.Deleted video", "1.Deleted video.moving-gone"]
+    assert read_frontmatter(root / "HUMAN" / "PODCASTS" / "1.Deleted video" / "1.Deleted video.md")["youtube_id"] == "stays"
+    parked = root / "HUMAN" / "PODCASTS" / "1.Deleted video.moving-gone"
+    assert (parked / "1.Deleted video.md").exists()  # its files are intact, prefix untouched
+
+
+def test_creating_into_an_occupied_name_never_hijacks_the_occupant(tmp_path):
+    """A new video whose N.Title matches an existing different video's folder
+    (same placeholder title, the old one not yet moved) must not take over
+    that note."""
+    root = tmp_path / "v"
+    index = VaultIndex(root)
+    old = place_video(index, PLAYLIST, _item(video_id="old", title="Deleted video", position=0))
+    old.folder.video.write_bytes(b"OLD")
+
+    fresh = VaultIndex.scan(root)  # "old" is known; "new" is not
+    new = place_video(fresh, PLAYLIST, _item(video_id="new", title="Deleted video", position=0))
+
+    assert new.created
+    assert read_frontmatter(new.folder.note)["youtube_id"] == "new"
+    parked = root / "HUMAN" / "PODCASTS" / "1.Deleted video.moving-old"
+    assert read_frontmatter(parked / "1.Deleted video.md")["youtube_id"] == "old"
+    assert (parked / "1.Deleted video.mp4").read_bytes() == b"OLD"
+    # and when "old" finally gets its real place, it comes back out of the park
+    moved = place_video(fresh, PLAYLIST, _item(video_id="old", title="Deleted video", position=7))
+    assert moved.folder.folder == root / "HUMAN" / "PODCASTS" / "8.Deleted video"
+    assert moved.folder.video.read_bytes() == b"OLD" and not parked.exists()
