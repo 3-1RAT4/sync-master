@@ -1,4 +1,9 @@
-from sync_master.tools.diarize import SpeakerSegment, diarize_audio, format_as_conversation
+import shutil
+import subprocess
+
+import pytest
+
+from sync_master.tools.diarize import SAMPLE_RATE, SpeakerSegment, diarize_audio, format_as_conversation, load_waveform
 
 
 class FakeSegment:
@@ -28,12 +33,44 @@ def test_diarize_audio_returns_speaker_segments_from_exclusive_diarization(tmp_p
         (FakeSegment(5.0, 10.0), "track_1", "SPEAKER_01"),
     ]
 
-    segments = diarize_audio(audio_path, pipeline=lambda path: FakeDiarizeOutput(tracks))
+    decoded = {"waveform": "fake-tensor", "sample_rate": SAMPLE_RATE}
+    received = []
+
+    def fake_pipeline(audio):
+        received.append(audio)
+        return FakeDiarizeOutput(tracks)
+
+    segments = diarize_audio(audio_path, pipeline=fake_pipeline, load_audio=lambda path: decoded)
 
     assert segments == [
         SpeakerSegment(start=0.0, end=5.0, speaker="SPEAKER_00"),
         SpeakerSegment(start=5.0, end=10.0, speaker="SPEAKER_01"),
     ]
+    # The pipeline must get the decoded waveform, never the path - a path makes
+    # pyannote decode via torchcodec, which needs FFmpeg shared libraries.
+    assert received == [decoded]
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
+def test_load_waveform_decodes_through_the_ffmpeg_binary(tmp_path):
+    # Two seconds of a 440Hz tone, synthesised by ffmpeg itself so the test
+    # needs no fixture file - and in AAC/m4a, the container yt-dlp produces.
+    audio_path = tmp_path / "tone.m4a"
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+         "-c:a", "aac", str(audio_path)],
+        check=True,
+    )
+
+    audio = load_waveform(audio_path)
+
+    assert audio["sample_rate"] == SAMPLE_RATE
+    waveform = audio["waveform"]
+    assert tuple(waveform.shape[:1]) == (1,)  # mono
+    assert abs(waveform.shape[1] - 2 * SAMPLE_RATE) < SAMPLE_RATE // 10  # ~2s, AAC priming tolerated
+    assert str(waveform.dtype) == "torch.float32"
+    assert float(waveform.abs().max()) <= 1.0
+    assert float(waveform.abs().max()) > 0.1  # it's not silence
 
 
 def test_format_as_conversation_groups_consecutive_same_speaker_segments():

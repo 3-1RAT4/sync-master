@@ -20,9 +20,48 @@ def _default_pipeline():
     )
 
 
-def diarize_audio(audio_path: Path, pipeline=None) -> list[SpeakerSegment]:
+SAMPLE_RATE = 16_000
+
+
+def load_waveform(audio_path: Path, sample_rate: int = SAMPLE_RATE) -> dict:
+    """Decodes anything ffmpeg understands into the in-memory form pyannote
+    accepts: {"waveform": (channels, samples) float32 tensor, "sample_rate"}.
+
+    Handing pyannote a file path makes it decode through torchcodec, which
+    dlopens FFmpeg's *shared libraries* at runtime - a system dependency this
+    project never declared. It happened to work where those libraries were
+    installed for other reasons, and fails anywhere with only an ffmpeg
+    binary (a static build, say). The binary is already a required tool
+    (bootstrap.REQUIRED_EXTERNAL_TOOLS) and is how Whisper decodes, so the
+    same subprocess here removes the hidden dependency entirely.
+    """
+    import subprocess
+
+    import numpy as np
+    import torch
+
+    # fmt: off
+    cmd = [
+        "ffmpeg", "-nostdin", "-threads", "0",
+        "-i", str(audio_path),
+        "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", str(sample_rate),
+        "-",
+    ]
+    # fmt: on
+    try:
+        pcm = subprocess.run(cmd, capture_output=True, check=True).stdout
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"ffmpeg could not decode {audio_path}: {exc.stderr.decode(errors='replace')}") from exc
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffmpeg is not on PATH (it is a required tool, see docs/setup.md)") from exc
+
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    return {"waveform": torch.from_numpy(samples).unsqueeze(0), "sample_rate": sample_rate}
+
+
+def diarize_audio(audio_path: Path, pipeline=None, load_audio=load_waveform) -> list[SpeakerSegment]:
     active_pipeline = pipeline or _default_pipeline()
-    diarization = active_pipeline(str(audio_path))
+    diarization = active_pipeline(load_audio(audio_path))
 
     return [
         SpeakerSegment(start=segment.start, end=segment.end, speaker=speaker)
