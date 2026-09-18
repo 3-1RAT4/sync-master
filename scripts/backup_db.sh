@@ -76,7 +76,12 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_FILE="$OUTPUT_DIR/${DB_NAME}_${TIMESTAMP}.dump"
 
 echo "Backing up $DB_NAME to $OUT_FILE ..."
-pg_dump -Fc --no-owner --no-privileges --file="$OUT_FILE" "$PG_URI"
+# --no-owner so the dump restores under whatever role owns the target, but
+# privileges are kept on purpose: the web UI streams videos as a read-only
+# role that needs an explicit grant on every large object (see
+# docs/web-ui.md), and a dump without them restores a catalog whose videos
+# all 404 until the grants are backfilled by hand.
+pg_dump -Fc --no-owner --file="$OUT_FILE" "$PG_URI"
 
 if [[ ! -s "$OUT_FILE" ]]; then
     echo "pg_dump produced an empty or missing file - treating as failure." >&2

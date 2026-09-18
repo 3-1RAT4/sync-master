@@ -237,6 +237,10 @@ scripts/restore_db.sh                                    # restores latest.dump 
 scripts/restore_db.sh --database-url ... some_backup.dump # restore a specific file elsewhere
 ```
 
+Dumps keep the large-object grants the web UI relies on, so a restore into a
+database where `sync_master_web` already exists needs no follow-up; if the
+role doesn't exist yet, create it first (see [web-ui.md](web-ui.md)).
+
 **This is destructive to its target** — existing objects are dropped and
 replaced with the backup's contents. It asks for confirmation unless you
 pass `--yes` (needed for non-interactive/cron use). Pass `--create-db` if
