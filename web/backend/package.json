@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && cp -R src/generated dist/generated",
     "start": "node dist/server.js",
     "db:pull": "prisma db pull && prisma generate"
   },
