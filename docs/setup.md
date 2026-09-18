@@ -124,6 +124,26 @@ run). Unlike the YouTube flow, the resulting token is **not** written into
 `~/.config/sync-master/.spotify_cache`, and `sync-master run` reads from
 that cache automatically afterward.
 
+## GPU
+
+Transcription (Whisper) and speaker diarization (pyannote) run on the GPU
+when torch can see one, and on the CPU otherwise — `sync-master bootstrap`
+prints which. Two things decide whether it can:
+
+- **The torch build must match the card.** `pip install torch` gives you the
+  NVIDIA (CUDA) build; on an AMD card it runs everything on the CPU without
+  a word of complaint. For AMD, install the ROCm build instead:
+  ```bash
+  .venv/bin/pip install --index-url https://download.pytorch.org/whl/rocm7.1 "torch==2.13.0+rocm7.1" "torchaudio==2.11.0+rocm7.1"
+  ```
+  (It needs `libatomic` from your distro.)
+- **RX 6600/6700-class AMD cards (gfx103x)** aren't in ROCm's official list;
+  they work with `HSA_OVERRIDE_GFX_VERSION=10.3.0` in `credentials.env` and
+  **segfault on the first kernel without it** — torch will still claim the
+  GPU is available, so don't trust that alone.
+
+Measured on an RX 6700 XT: diarization 7x faster than the four-core CPU.
+
 ## Point it at your vault
 
 Edit `~/.config/sync-master/settings.yaml`:

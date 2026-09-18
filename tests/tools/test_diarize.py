@@ -118,3 +118,28 @@ def test_format_as_conversation_formats_timestamp_past_one_hour():
     text = format_as_conversation(whisper_segments, [])
 
     assert text == "[01:02:05] UNKNOWN: One hour and change."
+
+
+def test_default_pipeline_is_moved_onto_the_chosen_device(monkeypatch):
+    import sys, types
+    from sync_master.tools import diarize
+
+    moved = []
+
+    class FakePipeline:
+        def to(self, dev):
+            moved.append(str(dev)); return self
+
+    pyannote = types.ModuleType("pyannote"); audio = types.ModuleType("pyannote.audio")
+    audio.Pipeline = types.SimpleNamespace(from_pretrained=lambda *a, **k: FakePipeline())
+    pyannote.audio = audio
+    monkeypatch.setitem(sys.modules, "pyannote", pyannote); monkeypatch.setitem(sys.modules, "pyannote.audio", audio)
+    torch = types.ModuleType("torch"); torch.device = lambda d: d
+    torch.cuda = types.SimpleNamespace(is_available=lambda: True, get_device_name=lambda i: "gpu"); torch.__version__ = "x"
+    torch.version = types.SimpleNamespace(hip=None); torch.backends = types.SimpleNamespace(cudnn=types.SimpleNamespace(enabled=True))
+    monkeypatch.setitem(sys.modules, "torch", torch)
+
+    diarize._default_pipeline()
+
+    # from_pretrained lands on the CPU; the pipeline must be moved explicitly.
+    assert moved == ["cuda"]

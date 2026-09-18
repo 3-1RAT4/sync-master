@@ -34,7 +34,9 @@ def _default_transcribe_segments(video_id: str, scratch_dir: Path, title: str | 
 
     import whisper
 
-    model = whisper.load_model("base")
+    from sync_master.tools.device import torch_device
+
+    model = whisper.load_model("base", device=torch_device())
     result = model.transcribe(str(audio_path))
     return [{"start": seg["start"], "end": seg["end"], "text": seg["text"]} for seg in result["segments"]]
 

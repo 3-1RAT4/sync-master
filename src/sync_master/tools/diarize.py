@@ -9,15 +9,21 @@ class SpeakerSegment:
     speaker: str
 
 
-def _default_pipeline():
+def _default_pipeline(device: str | None = None):
     import os
 
+    import torch
     from pyannote.audio import Pipeline
 
-    return Pipeline.from_pretrained(
+    from sync_master.tools.device import torch_device
+
+    pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-community-1",
         token=os.environ.get("HUGGINGFACE_TOKEN"),
     )
+    # from_pretrained leaves the pipeline on the CPU whatever the machine has;
+    # diarizing a multi-hour recording there takes hours, on a GPU minutes.
+    return pipeline.to(torch.device(device or torch_device()))
 
 
 SAMPLE_RATE = 16_000

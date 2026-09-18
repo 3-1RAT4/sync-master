@@ -75,12 +75,10 @@ def test_check_vault_requires_an_existing_obsidian_vault(tmp_path):
 
 
 def test_check_external_tools_reports_availability():
-    def fake_which(name):
-        return "/usr/bin/yt-dlp" if name == "yt-dlp" else None
-
-    result = check_external_tools(which_fn=fake_which)
-
-    assert result == {"yt-dlp": True, "ffmpeg": False}
+    result = check_external_tools(which_fn=lambda name: None)
+    assert result == {"ffmpeg": False}
+    result = check_external_tools(which_fn=lambda name: "/usr/bin/ffmpeg")
+    assert result == {"ffmpeg": True}
 
 
 def test_crontab_line_uses_given_interval():

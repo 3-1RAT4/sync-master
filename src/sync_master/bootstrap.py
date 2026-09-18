@@ -8,7 +8,9 @@ REQUIRED_CREDENTIAL_KEYS = [
     "SPOTIFY_CLIENT_ID",
     "SPOTIFY_CLIENT_SECRET",
 ]
-REQUIRED_EXTERNAL_TOOLS = ["yt-dlp", "ffmpeg"]
+# yt-dlp is a Python dependency (tools/download.py imports yt_dlp), not an
+# external tool - only ffmpeg has to be found on PATH.
+REQUIRED_EXTERNAL_TOOLS = ["ffmpeg"]
 
 CREDENTIALS_TEMPLATE = """# Fill in the values below
 # Google Cloud OAuth Client (needed to list/fetch your own playlists,
@@ -25,6 +27,9 @@ SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
 # Optional: only needed for speaker diarization (the "diarization" extra)
 HUGGINGFACE_TOKEN=
+# Optional, AMD only: RX 6600/6700-class cards (gfx103x) need this or ROCm
+# segfaults on the first kernel. Loaded into the environment before torch starts.
+# HSA_OVERRIDE_GFX_VERSION=10.3.0
 """
 
 LLM_YAML_TEMPLATE = """provider: deepseek
@@ -93,6 +98,10 @@ def run_bootstrap(config_dir: Path) -> None:
     for tool, available in tools.items():
         status = "found" if available else "MISSING - please install"
         typer.echo(f"  {tool}: {status}")
+
+    from sync_master.tools.device import gpu_summary
+
+    typer.echo(f"  GPU: {gpu_summary()}")
 
     missing = check_missing_credentials(config_dir / "credentials.env")
     if missing:
