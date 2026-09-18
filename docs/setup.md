@@ -140,7 +140,7 @@ that cache automatically afterward.
 
 ## Set your scratch directory
 
-Durable output lives in Postgres (see [Configuration](configuration.md#database-databaseurl));
+Durable output lives in Postgres (see [Configuration](configuration.md#database-database_url));
 `output_base_dir` is just scratch space for external tools. Edit
 `~/.config/sync-master/settings.yaml`:
 

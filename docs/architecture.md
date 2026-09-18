@@ -120,5 +120,5 @@ that something errored, so it isn't retried automatically. See
 [spotify_overrides.json](configuration.md#spotify_overridesjson) for how to
 resolve a `no_match` by hand.
 
-See [Configuration](configuration.md#database-databaseurl) for the full
+See [Configuration](configuration.md#database-database_url) for the full
 schema and connection setup.
