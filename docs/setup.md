@@ -205,6 +205,26 @@ empty for those). All of this is captured correctly going forward. Once
 you've confirmed the import looks right, the old `state.json` and
 `output_base_dir` are no longer read by sync-master and can be deleted.
 
+## Exporting to an Obsidian vault
+
+```bash
+sync-master export-vault --vault ~/Documents/"Obsidian Vault" --dry-run   # show the tree
+sync-master export-vault --vault ~/Documents/"Obsidian Vault"             # write it
+```
+
+Lays the catalog out under `SYNC_MASTER/VIDEOS/YOUTUBE/` inside the vault:
+one folder per playlist, following the playlist name's dash-segments
+(`HUMAN-PODCASTS[!#]` → `HUMAN/PODCASTS/`), and inside it one folder per video
+named `N.Title`, where `N` is the video's position in the playlist on YouTube.
+Every video gets a note; the ones the pipeline has processed also get their
+`.mp4`, `.transcript.md` and `.summary.md` beside it, all carrying the same
+`N.Title` prefix so `[[links]]` stay unambiguous.
+
+Structure comes from YouTube (so the token must be valid) and content from
+Postgres. Re-running overwrites files in place and never deletes — a
+reordered playlist changes `N` and leaves the old folder behind. Set
+`vault_dir` in `settings.yaml` to skip `--vault`.
+
 ## Backup and restore
 
 Everything durable lives in Postgres now, including video bytes (stored as

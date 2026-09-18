@@ -91,8 +91,23 @@ def test_fetch_playlist_items_returns_video_items_from_single_page():
             title="Video One",
             published_at="2026-01-01T00:00:00Z",
             playlist_id="PL123",
+            # No snippet.position in this fake page, so the running index stands in.
+            position=0,
         )
     ]
+
+
+def test_fetch_playlist_items_takes_position_from_the_snippet_when_present():
+    first = _item("v1", "Video One", "2026-01-01T00:00:00Z")
+    second = _item("v2", "Video Two", "2026-01-02T00:00:00Z")
+    first["snippet"]["position"] = 7
+    second["snippet"]["position"] = 8
+    client = FakeYoutubeClient(pages=[{"items": [first, second], "nextPageToken": None}])
+
+    items = fetch_playlist_items("PL123", youtube_client=client)
+
+    # YouTube's own playlist order, not where the item landed in our list.
+    assert [item.position for item in items] == [7, 8]
 
 
 def test_fetch_playlist_items_follows_pagination_across_pages():

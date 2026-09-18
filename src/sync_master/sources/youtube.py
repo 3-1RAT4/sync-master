@@ -19,6 +19,9 @@ class VideoItem:
     playlist_id: str
     description: str = ""
     thumbnail_url: str | None = None
+    # 0-based index within the playlist, as YouTube orders it. None only for
+    # callers that build items by hand (tests, legacy migration).
+    position: int | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,9 @@ def fetch_playlist_items(playlist_id: str, api_key: str | None = None, youtube_c
                     playlist_id=playlist_id,
                     description=snippet.get("description", ""),
                     thumbnail_url=_best_thumbnail_url(snippet.get("thumbnails") or {}),
+                    # snippet.position is the authoritative playlist order; the
+                    # running index is the same thing unless a page is missing it.
+                    position=snippet.get("position", len(items)),
                 )
             )
         request = client.playlistItems().list_next(request, response)

@@ -20,6 +20,20 @@ class ParsedPlaylist:
     actions: list[str]
 
 
+def derive_folder_segments(title: str) -> list[str]:
+    """The folder path a playlist name encodes, for *every* playlist.
+
+    parse_playlist_name only recognises flagged playlists, because it decides
+    what the pipeline does. This is purely structural - strip a trailing
+    [...] suffix if there is one, split on "-" - and mirrors the web UI's
+    taxonomy.ts:derivePathSegments, so both sides place a playlist in the
+    same folder. A title with no dashes becomes a single top-level folder.
+    """
+    match = _SUFFIX_RE.match(title)
+    path_part = match.group(1) if match else title
+    return [segment for segment in path_part.split("-") if segment]
+
+
 def parse_playlist_name(title: str) -> ParsedPlaylist | None:
     match = _SUFFIX_RE.match(title)
     if not match:

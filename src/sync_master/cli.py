@@ -32,6 +32,45 @@ def run(dry_run: bool = False) -> None:
 
 
 @app.command()
+def export_vault(
+    vault: Path | None = typer.Option(None, help="Obsidian vault root (default: vault_dir in settings.yaml)."),
+    dry_run: bool = typer.Option(False, help="Print the tree that would be written; write nothing."),
+) -> None:
+    """Lay the catalog out in an Obsidian vault: a note per video, plus the
+    stored mp4 / transcript / summary for videos the pipeline has processed."""
+    from dotenv import load_dotenv
+
+    from sync_master.config import load_settings
+    from sync_master.db.engine import get_session
+    from sync_master.vault_export import VAULT_SUBDIR, export_vault as run_export
+    from sync_master.youtube_auth import build_oauth_client
+
+    load_dotenv(CONFIG_DIR / "credentials.env")
+    settings = load_settings(CONFIG_DIR / "settings.yaml")
+    vault_dir = vault or (Path(settings["vault_dir"]).expanduser() if settings.get("vault_dir") else None)
+    if vault_dir is None:
+        typer.echo("No vault given: pass --vault PATH or set vault_dir in settings.yaml.")
+        raise typer.Exit(code=1)
+    if not vault_dir.is_dir():
+        typer.echo(f"Vault directory does not exist: {vault_dir}")
+        raise typer.Exit(code=1)
+
+    typer.echo(f"{'Would write' if dry_run else 'Writing'} to {vault_dir / VAULT_SUBDIR}\n")
+    session = get_session()
+    try:
+        stats = run_export(vault_dir, session, build_oauth_client(), dry_run=dry_run, log=typer.echo)
+    finally:
+        session.close()
+
+    typer.echo(
+        f"\n{stats.playlists} playlists, {stats.notes} notes, "
+        f"{stats.videos} videos ({stats.video_bytes / 1e6:.0f} MB), "
+        f"{stats.transcripts} transcripts, {stats.summaries} summaries"
+        + (" - dry run, nothing written" if dry_run else "")
+    )
+
+
+@app.command()
 def bootstrap() -> None:
     """Scaffold ~/.config/sync-master and validate credentials."""
     from sync_master.bootstrap import run_bootstrap

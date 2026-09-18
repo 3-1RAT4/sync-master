@@ -264,6 +264,38 @@ def get_video_file_content(session: Session, youtube_video_id: str) -> bytes | N
         large_object.close()
 
 
+def write_video_file_to(session: Session, youtube_video_id: str, destination: Path) -> int | None:
+    """Streams a stored video to disk in 1MB chunks and returns the byte count,
+    or None when nothing is stored for it. Unlike get_video_file_content this
+    never holds the whole object in memory - these files run to ~500MB.
+    Written to a temp path and renamed, so a failure can't leave a truncated
+    file that looks complete.
+    """
+    video_pk = _resolve_video_pk(session, youtube_video_id)
+    content_oid = session.execute(
+        select(VideoFile.content_oid).where(VideoFile.video_id == video_pk)
+    ).scalar_one_or_none()
+    if content_oid is None:
+        return None
+
+    raw_connection = session.connection().connection.dbapi_connection
+    large_object = raw_connection.lobject(content_oid, mode="rb")
+    partial = destination.with_name(destination.name + ".part")
+    written = 0
+    try:
+        with partial.open("wb") as out:
+            while True:
+                chunk = large_object.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                written += len(chunk)
+    finally:
+        large_object.close()
+    partial.replace(destination)
+    return written
+
+
 def get_transcript_text(session: Session, youtube_video_id: str) -> str | None:
     video_pk = _resolve_video_pk(session, youtube_video_id)
     return session.execute(

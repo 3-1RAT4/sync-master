@@ -40,6 +40,8 @@ base_url: https://api.deepseek.com
 """
 
 SETTINGS_YAML_TEMPLATE = f"""output_base_dir: {Path.home() / "sync-master-output"}
+# Obsidian vault that `sync-master export-vault` writes into (SYNC_MASTER/VIDEOS/YOUTUBE/ inside it)
+# vault_dir: {Path.home() / "Documents" / "Obsidian Vault"}
 """
 
 
