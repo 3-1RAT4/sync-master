@@ -31,7 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from sync_master.db import repository
-from sync_master.db.models import Summary, Transcript, Video, VideoFile
+from sync_master.db.models import Playlist, Summary, Transcript, Video, VideoFile
 from sync_master.playlist_naming import derive_folder_segments
 from sync_master.sources.youtube import PlaylistInfo, VideoItem, fetch_my_playlists, fetch_playlist_items
 
@@ -139,6 +139,41 @@ def video_note(
     if item.description and item.description.strip():
         parts.append("\n## Description\n\n" + item.description.strip() + "\n")
     return "".join(parts)
+
+
+def catalog_playlists(session: Session) -> list[PlaylistInfo]:
+    """The catalog's playlists, for exporting without touching YouTube."""
+    return [
+        PlaylistInfo(
+            playlist_id=p.external_id,
+            title=p.title,
+            description=p.description or "",
+            thumbnail_url=p.thumbnail_url,
+            item_count=p.item_count,
+        )
+        for p in session.execute(select(Playlist).order_by(Playlist.title)).scalars()
+    ]
+
+
+def catalog_items(session: Session, playlist_external_id: str) -> list[VideoItem]:
+    """A playlist's videos from the catalog. Order is insertion order (videos.id),
+    which is the order YouTube returned them when first catalogued - the best
+    stand-in for playlist position the database has, since position itself was
+    never stored. A later reorder on YouTube isn't reflected here."""
+    playlist = session.execute(select(Playlist).where(Playlist.external_id == playlist_external_id)).scalar_one()
+    rows = session.execute(select(Video).where(Video.playlist_id == playlist.id).order_by(Video.id)).scalars()
+    return [
+        VideoItem(
+            video_id=v.external_id,
+            title=v.title,
+            published_at=v.published_at.isoformat() if v.published_at else "",
+            playlist_id=playlist_external_id,
+            description=v.description or "",
+            thumbnail_url=v.thumbnail_url,
+            position=index,
+        )
+        for index, v in enumerate(rows)
+    ]
 
 
 @dataclass

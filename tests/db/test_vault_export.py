@@ -2,7 +2,7 @@ from pathlib import Path
 
 from sync_master.db import repository
 from sync_master.sources.youtube import PlaylistInfo, VideoItem
-from sync_master.vault_export import VAULT_SUBDIR, export_vault
+from sync_master.vault_export import VAULT_SUBDIR, catalog_items, catalog_playlists, export_vault
 
 
 def _seed(session):
@@ -77,3 +77,17 @@ def test_write_video_file_to_streams_and_returns_none_when_nothing_stored(db_ses
     repository.save_video_file(db_session, "v", filename="x.mp4", content_type="video/mp4", content=payload)
     assert repository.write_video_file_to(db_session, "v", tmp_path / "x.mp4") == len(payload)
     assert (tmp_path / "x.mp4").read_bytes() == payload
+
+
+def test_catalog_fetchers_mirror_the_database_in_first_seen_order(db_session):
+    _seed(db_session)
+    repository.upsert_playlist(db_session, source="youtube", external_id="PL2", title="AI-MUSIC")
+
+    playlists = catalog_playlists(db_session)
+    assert [p.title for p in playlists] == ["AI-MUSIC", "HUMAN-PODCASTS[!#]"]
+
+    items = catalog_items(db_session, "PL1")
+    # insertion order = videos.id order, positions filled in 0..n-1
+    assert [(i.video_id, i.position) for i in items] == [("done", 0), ("bare", 1)]
+    assert items[0].title == "Ep: one"
+    assert catalog_items(db_session, "PL2") == []
