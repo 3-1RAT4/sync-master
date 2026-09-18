@@ -72,3 +72,26 @@ def test_download_video_downloads_when_no_matching_file_exists_yet(tmp_path):
     result = download_video("v1", tmp_path, title="My Video Title", downloader_factory=fake_factory)
 
     assert result == tmp_path / "My_Video_Title.mp4"
+
+
+def test_download_video_ignores_leftover_partial_files(tmp_path):
+    (tmp_path / "My_Video_Title.mp4.part").write_text("half of it")
+    (tmp_path / "My_Video_Title.mp4.ytdl").write_text("{}")
+
+    result = download_video("v1", tmp_path, title="My Video Title", downloader_factory=lambda opts: FakeYoutubeDL(opts))
+
+    assert result.name == "My_Video_Title.mp4"  # downloaded, the .part was not mistaken for the file
+
+
+def test_download_video_merges_best_video_and_audio_into_mp4(tmp_path):
+    captured = {}
+
+    class Capturing(FakeYoutubeDL):
+        def __init__(self, opts):
+            super().__init__(opts); captured.update(opts)
+
+    download_video("v1", tmp_path, downloader_factory=Capturing)
+
+    assert captured["merge_output_format"] == "mp4"
+    assert captured["format"].startswith("bv*[vcodec^=avc1][ext=mp4]+ba[ext=m4a]")
+    assert captured["format"].endswith("/b")  # still works if only a combined format exists

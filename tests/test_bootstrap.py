@@ -76,9 +76,9 @@ def test_check_vault_requires_an_existing_obsidian_vault(tmp_path):
 
 def test_check_external_tools_reports_availability():
     result = check_external_tools(which_fn=lambda name: None)
-    assert result == {"ffmpeg": False}
-    result = check_external_tools(which_fn=lambda name: "/usr/bin/ffmpeg")
-    assert result == {"ffmpeg": True}
+    assert result == {"ffmpeg": False, "deno": False}
+    result = check_external_tools(which_fn=lambda name: "/usr/bin/" + name)
+    assert result == {"ffmpeg": True, "deno": True}
 
 
 def test_crontab_line_uses_given_interval():

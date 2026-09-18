@@ -10,7 +10,9 @@ REQUIRED_CREDENTIAL_KEYS = [
 ]
 # yt-dlp is a Python dependency (tools/download.py imports yt_dlp), not an
 # external tool - only ffmpeg has to be found on PATH.
-REQUIRED_EXTERNAL_TOOLS = ["ffmpeg"]
+# deno: yt-dlp needs a JS runtime for YouTube's player challenges; without it
+# only leftover low-quality formats appear and downloads 403.
+REQUIRED_EXTERNAL_TOOLS = ["ffmpeg", "deno"]
 
 CREDENTIALS_TEMPLATE = """# Fill in the values below
 # Google Cloud OAuth Client (needed to list/fetch your own playlists,

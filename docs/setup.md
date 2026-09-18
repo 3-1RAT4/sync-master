@@ -3,7 +3,11 @@
 ## Prerequisites
 
 - Python 3.11+
-- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) and `ffmpeg` available on your `PATH`
+- `ffmpeg` on your `PATH` (yt-dlp itself is a Python dependency)
+- [`deno`](https://deno.land) on your `PATH` — yt-dlp needs a JavaScript
+  runtime to solve YouTube's player challenges; without one it only sees
+  low-quality leftovers and downloads fail with `HTTP Error 403`.
+  `curl -fsSL https://deno.land/install.sh | DENO_INSTALL=~/.local sh`
 - A Google Cloud OAuth Client (Desktop app type) with the YouTube Data API v3
   enabled — needed to list and fetch *your own* playlists, including private
   ones, which a plain API key can't do. See [Google Cloud Console](https://console.cloud.google.com/) →
