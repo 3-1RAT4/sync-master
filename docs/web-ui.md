@@ -1,6 +1,8 @@
 # Web UI
 
-A read-only browser for the catalog sync-master builds (`web/`) — playlist folder tree, videos, transcripts, summaries, processing status. Fully separate TypeScript stack, not part of the `sync_master` Python package: sync-master's job is still only to hydrate the database (`sync-master run`, `migrate-legacy`) and run the pipeline. It never serves this UI.
+A read-only browser for the catalog sync-master builds (`web/`) — playlist folder tree, videos, transcripts, summaries, processing status, and playback of the stored videos. Fully separate TypeScript stack, not part of the `sync_master` Python package: sync-master's job is still only to hydrate the database (`sync-master run`, `migrate-legacy`) and run the pipeline. It never serves this UI.
+
+**There is no authentication.** Where it's reachable is decided entirely by `HOST` in `web/backend/.env`: `127.0.0.1` (the default) keeps it on the machine it runs on; `0.0.0.0` exposes it to the whole network, and anyone on that network can browse the catalog, read every transcript and summary, and stream the full video files. It runs on the home server bound to the LAN, which is a deliberate choice for a trusted home network and nothing wider.
 
 ```
 web/
@@ -22,8 +24,9 @@ GRANT CONNECT ON DATABASE mydb TO sync_master_web;
 GRANT USAGE ON SCHEMA public TO sync_master_web;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO sync_master_web;
 -- so tables added by future Alembic migrations are readable automatically,
--- without a manual re-grant every time (assumes migrations run as `rodz`):
-ALTER DEFAULT PRIVILEGES FOR ROLE rodz IN SCHEMA public GRANT SELECT ON TABLES TO sync_master_web;
+-- without a manual re-grant every time. `sync_master` is the role that owns the
+-- database and runs Alembic (on the laptop it was `rodz`):
+ALTER DEFAULT PRIVILEGES FOR ROLE sync_master IN SCHEMA public GRANT SELECT ON TABLES TO sync_master_web;
 ```
 
 This is defense in depth: a bug in the web stack can't corrupt data even by accident, since the role the backend authenticates as physically cannot write.
@@ -63,15 +66,16 @@ cd web/frontend && npm install && npm run dev    # http://localhost:5173
 
 The frontend's Vite dev server proxies `/api/*` to the backend (`web/frontend/vite.config.ts`), so the SPA always calls a relative `/api/trpc/...` URL regardless of which port it's actually served from.
 
-For day-to-day use (not active frontend development), build the SPA and let Express serve the static files itself — one process, one port, matching the localhost-only/no-auth access model:
+For day-to-day use — and on the server — build the SPA and let Express serve it, one process on one port:
 
 ```bash
-cd web/frontend && npm run build   # writes web/frontend/dist
-# (Express static-file serving of that dist/ directory is not wired up yet -
-# see "Not built yet" below.)
+cd web/frontend && npm run build          # writes web/frontend/dist
+cd web/backend  && npm run build && npm start   # serves dist/ and /api on $PORT
 ```
 
-`web/backend/.env` (gitignored, copy from `.env.example`) holds `DATABASE_URL` for the `sync_master_web` role and the port to listen on.
+`server.ts` serves `web/frontend/dist` when it exists (with an SPA fallback for client-side routes, mounted after `/api` so it can never shadow the API) and logs "API only" when it doesn't, so the same backend works in both modes.
+
+`web/backend/.env` (gitignored, copy from `.env.example`) holds `DATABASE_URL` for the `sync_master_web` role, the port, and `HOST` (see above).
 
 ## API shape
 
@@ -96,6 +100,5 @@ BigInt (every `id` column) and `Date` (every `timestamptz` column) need `superjs
 
 ## Not built yet
 
-- Express serving the built SPA (`web/frontend/dist`) for single-process/single-port day-to-day use.
-- Annotations and Affine sync — explicit future passes, not designed yet.
-- Auth — not needed for the current localhost-only access model; revisit before exposing this beyond your own machine.
+- Annotations — an explicit future pass, not designed yet.
+- Auth — see the access-model note at the top; required before this is ever reachable from outside the home network.
