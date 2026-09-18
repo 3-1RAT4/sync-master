@@ -144,3 +144,13 @@ def test_a_held_lock_refuses_to_run(env):
     (config / "state.json.lock").touch()
     with pytest.raises(LockHeldError):
         _run(env, [FLAGGED], {})
+
+
+def test_a_video_listed_twice_in_a_playlist_keeps_its_first_position(env):
+    items = {"PL1": [_item("a", "Ep one", position=0), _item("b", "Ep two", position=1), _item("a", "Ep one", position=2)]}
+    report, _, root, _ = _run(env, [FLAGGED], items)
+    assert (report.created, report.moved) == (2, 0)
+    assert sorted(p.name for p in (root / "HUMAN" / "PODCASTS").iterdir()) == ["1.Ep one", "2.Ep two"]
+    # and it stays put on the next run instead of flip-flopping
+    report, _, _, _ = _run(env, [FLAGGED], items)
+    assert (report.created, report.moved) == (0, 0)

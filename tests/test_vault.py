@@ -298,3 +298,20 @@ def test_creating_into_an_occupied_name_never_hijacks_the_occupant(tmp_path):
     moved = place_video(fresh, PLAYLIST, _item(video_id="old", title="Deleted video", position=7))
     assert moved.folder.folder == root / "HUMAN" / "PODCASTS" / "8.Deleted video"
     assert moved.folder.video.read_bytes() == b"OLD" and not parked.exists()
+
+
+def test_writers_keep_the_managed_block_in_step_with_the_folder(tmp_path):
+    """The note is refreshed before the actions run; each writer must bring
+    the block up to date itself, or the embed never appears."""
+    vf = VideoFolder(tmp_path / "1.Ep- one", "1.Ep- one")
+    _write_note(vf)
+    assert ".mp4" not in vf.note.read_text()
+
+    src = tmp_path / "s.mp4"; src.write_bytes(b"x")
+    store_video(vf, src)
+    assert "![[1.Ep- one.mp4]]" in vf.note.read_text()
+    store_transcript(vf, "[00:00:00] SPEAKER_00: hi", "captions", "Ep: one")
+    store_summary(vf, "s", "p", "m", "Ep: one")
+    body = split_note(vf.note.read_text())[1]
+    assert "[[1.Ep- one.transcript|Transcript]] · [[1.Ep- one.summary|Summary]]" in body
+    assert body.count(BLOCK_BEGIN) == 1

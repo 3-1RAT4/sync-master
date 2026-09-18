@@ -57,11 +57,18 @@ def perform_run(
         for playlist in fetch_playlists_fn(youtube_client):
             report.playlists += 1
             parsed = parse_playlist_name(playlist.title)
+            placed_here: set[str] = set()
 
             for position, item in enumerate(fetch_items_fn(playlist.playlist_id, youtube_client=youtube_client)):
                 if item.position is None:
                     item = replace(item, position=position)
                 report.videos += 1
+                # The same video can sit in a playlist twice. One folder per
+                # (playlist, video) means one position - the first - otherwise
+                # the folder would be renamed back and forth on every run.
+                if item.video_id in placed_here:
+                    continue
+                placed_here.add(item.video_id)
 
                 if dry_run:
                     existing = index.find(playlist.playlist_id, item.video_id)

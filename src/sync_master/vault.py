@@ -287,6 +287,21 @@ def refresh_note(vf: VideoFolder, item: VideoItem, playlist: PlaylistInfo, previ
     vf.note.write_text(_frontmatter(fields) + body, encoding="utf-8")
 
 
+def refresh_block(vf: VideoFolder) -> None:
+    """Re-render only the managed block from what's in the folder now. Called
+    by every writer, so the note's embed and links always match the files -
+    the actions run after the note was refreshed for the run."""
+    if not vf.note.exists():
+        return
+    fields, body = split_note(vf.note.read_text(encoding="utf-8"))
+    block = managed_block(vf)
+    if _BLOCK_RE.search(body):
+        body = _BLOCK_RE.sub(lambda _: block, body, count=1)
+    else:
+        body = block + body
+    vf.note.write_text(_frontmatter(fields) + body, encoding="utf-8")
+
+
 def update_frontmatter(note: Path, **fields) -> None:
     current, body = split_note(note.read_text(encoding="utf-8"))
     current.update(fields)
@@ -407,15 +422,18 @@ def store_video(vf: VideoFolder, source: Path) -> int:
     partial = vf.video.with_name(vf.video.name + ".part")
     shutil.copyfile(source, partial)
     partial.replace(vf.video)
+    refresh_block(vf)
     return vf.video.stat().st_size
 
 
 def store_transcript(vf: VideoFolder, text: str, source: str, title: str) -> None:
     vf.transcript.write_text(transcript_to_markdown(text, _youtube_id(vf), source, title), encoding="utf-8")
+    refresh_block(vf)
 
 
 def store_summary(vf: VideoFolder, content: str, provider: str, model: str, title: str) -> None:
     vf.summary.write_text(summary_to_markdown(content, _youtube_id(vf), provider, model, title), encoding="utf-8")
+    refresh_block(vf)
 
 
 def record_spotify_sync(vf: VideoFolder, track_uri: str, playlist_id: str, matched_via: str) -> None:
