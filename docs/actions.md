@@ -15,9 +15,11 @@ Downloads the best-available-quality video via yt-dlp
 filename is the video's title with spaces replaced by underscores
 (`sanitize_filename` in `src/sync_master/tools/naming.py`) — falls back to
 the generic name `video` if no title is available for some reason. The
-orchestrator then reads those bytes back and stores them in the `video_files`
-table (`src/sync_master/db/repository.py::save_video_file`) — the file on
-disk is scratch space after that, not the durable copy.
+orchestrator then copies it into the video's folder in the vault as
+`<N>.<title>.mp4` (`vault.store_video`) — copied, not moved, because the
+scratch file is what `transcript` reads next. The scratch copy is
+disposable after that; the vault's is the durable one, and the note's
+managed block gains an `![[…mp4]]` embed so it plays inline in Obsidian.
 
 ## `transcript`
 
@@ -26,22 +28,22 @@ Two independent things happen here, always, regardless of each other:
 1. **Text**: tries YouTube's own captions first (`youtube-transcript-api`,
    fast/free). If none are available, falls back to downloading audio and
    transcribing it with Whisper. `get_transcript`'s returned `source` field
-   (`captions` or `whisper`) is persisted as-is into the `transcripts.source`
-   column (`src/sync_master/db/repository.py::save_transcript`) — unlike the
-   pre-Postgres design, this is no longer thrown away.
+   (`captions` or `whisper`) goes into the transcript note's frontmatter.
 2. **Speakers**: downloads audio (if not already downloaded — see below) and
    runs diarization, **every time**, whether or not captions succeeded for
    the text. This means every `transcript` action needs an audio download,
    even on the fast captions path — a deliberate tradeoff (see
    [Speaker diarization](#speaker-diarization) below) to always get speaker
-   labels rather than only on the Whisper fallback. The raw per-speaker
-   segments are persisted too, into `transcript_segments` (one row per
-   speaker turn) — also no longer thrown away.
+   labels rather than only on the Whisper fallback.
 
-These two are merged by timestamp into one output:
-`[HH:MM:SS] SPEAKER_00: text...` turns, stored as `transcripts.text`. The
-scratch audio file used to produce it (in the same directory `download`
-uses) is disposable once this action completes.
+These two are merged by timestamp into `[HH:MM:SS] SPEAKER_00: text...`
+turns and written to the vault as `<N>.<title>.transcript.md`
+(`vault.store_transcript`) — one paragraph per turn, `**[00:00:13] Speaker
+00:** words`, with `youtube_id` and `source` in the frontmatter. The
+`summarize` action reads the conversation back out of that note
+(`vault.read_transcript_text`), so the transcript never needs to be kept
+anywhere else. The scratch audio file used to produce it (in the same
+directory `download` uses) is disposable once this action completes.
 
 The audio download used for diarization (and for the Whisper fallback, when
 needed) reuses whatever `download` already fetched, if present —
@@ -84,14 +86,15 @@ segments ambiguous between two overlapping speakers.
 
 ## `summarize`
 
-Reads the transcript text back from the `transcripts` table (written by
-`transcript`) and calls the configured LLM
+Reads the conversation back out of the transcript note in the vault (written
+by `transcript`) and calls the configured LLM
 (`src/sync_master/tools/summarize.py`) with a fixed instruction string
 (`DEFAULT_SUMMARIZE_INSTRUCTIONS` in `orchestrator.py` — "summarize concisely,
 capturing the key points and main topics discussed"). There's no
 per-playlist customization of summary style in this design — the `#` flag
-means "summarize the same way, everywhere." The result, along with which LLM
-provider/model produced it, is stored in the `summaries` table.
+means "summarize the same way, everywhere." The result is written as
+`<N>.<title>.summary.md` next to the note, with the LLM provider and model
+in its frontmatter — it's Markdown already, so it renders as-is in Obsidian.
 
 Since `#` always expands to `transcript` + `summarize` together (see
 [Configuration](configuration.md#playlist-naming-scheme)), and canonical
@@ -117,6 +120,13 @@ Two separate things get resolved here, independently:
       This is unrelated to the playlist resolution above — a `no_match`
       here never means "couldn't create the playlist," only "couldn't find
       this track."
+
+A successful match is recorded in the video note's frontmatter
+(`spotify_track_uri`, `spotify_playlist_id`, `spotify_matched_via`), so it's
+visible in Obsidian — and it's also what tells the next run the action is
+really done. The playlist name → Spotify id lookup is cached in
+`state.json` (`spotify_playlists`), so `find_or_create_playlist` searches
+once per name, not once per video.
 
 ## Failure handling
 

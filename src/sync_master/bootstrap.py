@@ -7,7 +7,6 @@ REQUIRED_CREDENTIAL_KEYS = [
     "LLM_API_KEY",
     "SPOTIFY_CLIENT_ID",
     "SPOTIFY_CLIENT_SECRET",
-    "DATABASE_URL",
 ]
 REQUIRED_EXTERNAL_TOOLS = ["yt-dlp", "ffmpeg"]
 
@@ -26,12 +25,6 @@ SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
 # Optional: only needed for speaker diarization (the "diarization" extra)
 HUGGINGFACE_TOKEN=
-# Optional: the web UI's read-only role (see docs/web-ui.md). When set,
-# downloaded videos grant it read access so the UI can stream them - Postgres
-# large objects have their own ACLs and table grants don't cover them.
-WEB_READONLY_ROLE=
-# Postgres connection string - see docker-compose.yml for a local dev instance
-DATABASE_URL=postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb
 """
 
 LLM_YAML_TEMPLATE = """provider: deepseek
@@ -39,9 +32,11 @@ model: deepseek-chat
 base_url: https://api.deepseek.com
 """
 
-SETTINGS_YAML_TEMPLATE = f"""output_base_dir: {Path.home() / "sync-master-output"}
-# Obsidian vault that `sync-master export-vault` writes into (SYNC_MASTER/VIDEOS/YOUTUBE/ inside it)
-# vault_dir: {Path.home() / "Documents" / "Obsidian Vault"}
+SETTINGS_YAML_TEMPLATE = f"""# The Obsidian vault sync-master writes into (everything lands under
+# SYNC_MASTER/VIDEOS/YOUTUBE/ inside it).
+vault_dir: {Path.home() / "Documents" / "Obsidian Vault"}
+# Scratch space for downloads while they're being transcribed; safe to clean out.
+output_base_dir: {Path.home() / "sync-master-output"}
 """
 
 
@@ -60,21 +55,16 @@ def scaffold_config_dir(config_dir: Path) -> None:
             path.write_text(content)
 
 
-def check_database_connection(database_url: str | None) -> str | None:
-    """Returns None if the connection succeeds, or an error message otherwise."""
-    if not database_url:
-        return "DATABASE_URL is not set"
-
-    from sqlalchemy import create_engine, text
-    from sqlalchemy.exc import SQLAlchemyError
-
-    try:
-        engine = create_engine(database_url)
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-        engine.dispose()
-    except SQLAlchemyError as exc:
-        return str(exc)
+def check_vault(vault_dir: str | None) -> str | None:
+    """Returns None if vault_dir is an Obsidian vault we can write into, or
+    an error message otherwise."""
+    if not vault_dir:
+        return "vault_dir is not set in settings.yaml"
+    path = Path(vault_dir).expanduser()
+    if not path.is_dir():
+        return f"{path} does not exist"
+    if not (path / ".obsidian").is_dir():
+        return f"{path} has no .obsidian/ folder - is it really an Obsidian vault?"
     return None
 
 
@@ -109,16 +99,15 @@ def run_bootstrap(config_dir: Path) -> None:
         typer.echo(f"Missing credentials in {config_dir / 'credentials.env'}: {', '.join(missing)}")
         typer.echo("Please edit that file and re-run bootstrap.")
 
-    if "DATABASE_URL" not in missing:
-        from dotenv import dotenv_values
+    import yaml
 
-        database_url = dotenv_values(config_dir / "credentials.env").get("DATABASE_URL")
-        db_error = check_database_connection(database_url)
-        if db_error:
-            typer.echo(f"Could not connect to DATABASE_URL: {db_error}")
-            typer.echo("Start Postgres (e.g. `docker compose up -d postgres`) and run `alembic upgrade head`.")
-        else:
-            typer.echo("Database connection: ok")
+    settings = yaml.safe_load((config_dir / "settings.yaml").read_text()) or {}
+    vault_error = check_vault(settings.get("vault_dir"))
+    if vault_error:
+        typer.echo(f"Vault: {vault_error}")
+        typer.echo("Set vault_dir in settings.yaml to your Obsidian vault's root folder.")
+    else:
+        typer.echo(f"Vault: {settings['vault_dir']} ok")
 
     typer.echo(
         "Run `sync-master youtube-login` to complete the one-time YouTube OAuth "

@@ -1,5 +1,5 @@
 from sync_master.bootstrap import (
-    check_database_connection,
+    check_vault,
     check_external_tools,
     check_missing_credentials,
     crontab_line,
@@ -18,7 +18,8 @@ def test_scaffold_config_dir_creates_expected_structure(tmp_path):
     assert (config_dir / "credentials.env").exists()
     assert (config_dir / "llm.yaml").exists()
     assert (config_dir / "settings.yaml").exists()
-    assert "DATABASE_URL=" in (config_dir / "credentials.env").read_text()
+    assert "DATABASE_URL" not in (config_dir / "credentials.env").read_text()
+    assert "vault_dir:" in (config_dir / "settings.yaml").read_text()
     assert not (config_dir / "sources").exists()
 
 
@@ -34,7 +35,7 @@ def test_scaffold_config_dir_does_not_overwrite_existing_files(tmp_path):
 
 def test_check_missing_credentials_reports_absent_keys(tmp_path, monkeypatch):
     for key in ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY",
-                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "DATABASE_URL"]:
+                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"]:
         monkeypatch.delenv(key, raising=False)
     credentials_path = tmp_path / "credentials.env"
     credentials_path.write_text("")
@@ -47,19 +48,17 @@ def test_check_missing_credentials_reports_absent_keys(tmp_path, monkeypatch):
         "LLM_API_KEY",
         "SPOTIFY_CLIENT_ID",
         "SPOTIFY_CLIENT_SECRET",
-        "DATABASE_URL",
     }
 
 
 def test_check_missing_credentials_excludes_keys_present_in_file(tmp_path, monkeypatch):
     for key in ["YOUTUBE_OAUTH_CLIENT_ID", "YOUTUBE_OAUTH_CLIENT_SECRET", "LLM_API_KEY",
-                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "DATABASE_URL"]:
+                "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"]:
         monkeypatch.delenv(key, raising=False)
     credentials_path = tmp_path / "credentials.env"
     credentials_path.write_text(
         "YOUTUBE_OAUTH_CLIENT_ID=abc123\nYOUTUBE_OAUTH_CLIENT_SECRET=xyz789\n"
         "SPOTIFY_CLIENT_ID=abc123\nSPOTIFY_CLIENT_SECRET=xyz789\n"
-        "DATABASE_URL=postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb\n"
     )
 
     missing = check_missing_credentials(credentials_path)
@@ -67,14 +66,12 @@ def test_check_missing_credentials_excludes_keys_present_in_file(tmp_path, monke
     assert missing == ["LLM_API_KEY"]
 
 
-def test_check_database_connection_reports_message_when_url_missing():
-    assert check_database_connection(None) == "DATABASE_URL is not set"
-
-
-def test_check_database_connection_reports_error_for_unreachable_database():
-    error = check_database_connection("postgresql+psycopg2://baduser:badpass@localhost:1/nodb")
-
-    assert error is not None
+def test_check_vault_requires_an_existing_obsidian_vault(tmp_path):
+    assert check_vault(None) == "vault_dir is not set in settings.yaml"
+    assert "does not exist" in check_vault(str(tmp_path / "nope"))
+    assert "no .obsidian/" in check_vault(str(tmp_path))
+    (tmp_path / ".obsidian").mkdir()
+    assert check_vault(str(tmp_path)) is None
 
 
 def test_check_external_tools_reports_availability():

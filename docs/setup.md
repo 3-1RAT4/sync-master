@@ -14,9 +14,8 @@
 - An API key for your chosen LLM provider (DeepSeek by default; any
   OpenAI-compatible or LangChain-supported provider works) — used only by
   the `summarize` action
-- A Postgres database (16+ recommended) — a local dev instance is provided
-  via `docker-compose.yml` (`docker compose up -d postgres`), or point at
-  any existing server
+- An [Obsidian](https://obsidian.md) vault — that's where everything
+  sync-master produces ends up
 
 ## Install
 
@@ -66,18 +65,6 @@ If you skip this extra, every `transcript` action will fail (it always
 attempts diarization) — only skip it if none of your flagged playlists use
 `#`.
 
-## Set up the database
-
-```bash
-docker compose up -d postgres    # or point DATABASE_URL at an existing server
-.venv/bin/alembic upgrade head
-```
-
-The default `docker-compose.yml` creates a `mydb` database with user
-`sync_master` / password `changeme` — matching the `DATABASE_URL` bootstrap
-scaffolds into `credentials.env` below. Change both together if you use
-different credentials.
-
 ## Bootstrap
 
 ```bash
@@ -87,8 +74,8 @@ different credentials.
 This scaffolds `~/.config/sync-master/` (creating `logs/`,
 `spotify_overrides.json`, `credentials.env`, `llm.yaml`, and `settings.yaml`
 templates — it never overwrites files that already exist), checks whether
-`yt-dlp` and `ffmpeg` are on your `PATH`, checks that `DATABASE_URL` is
-reachable, and reports which required credentials are still missing.
+`yt-dlp` and `ffmpeg` are on your `PATH`, checks that `vault_dir` points at
+an Obsidian vault, and reports which required credentials are still missing.
 
 Fill in `~/.config/sync-master/credentials.env`:
 
@@ -102,7 +89,6 @@ SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:8080/callback
 # Optional: only needed for speaker diarization (the "diarization" extra)
 HUGGINGFACE_TOKEN=
-DATABASE_URL=postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb
 ```
 
 `YOUTUBE_OAUTH_CLIENT_ID`/`_SECRET` come from the Google Cloud OAuth Client
@@ -138,15 +124,19 @@ run). Unlike the YouTube flow, the resulting token is **not** written into
 `~/.config/sync-master/.spotify_cache`, and `sync-master run` reads from
 that cache automatically afterward.
 
-## Set your scratch directory
+## Point it at your vault
 
-Durable output lives in Postgres (see [Configuration](configuration.md#database-database_url));
-`output_base_dir` is just scratch space for external tools. Edit
-`~/.config/sync-master/settings.yaml`:
+Edit `~/.config/sync-master/settings.yaml`:
 
 ```yaml
+vault_dir: /home/you/Documents/Obsidian Vault
 output_base_dir: /home/you/sync-master-scratch
 ```
+
+`vault_dir` is the root of your Obsidian vault; sync-master writes under
+`SYNC_MASTER/VIDEOS/YOUTUBE/` inside it and never touches anything else.
+`output_base_dir` is scratch space for yt-dlp and Whisper — safe to delete
+whenever. See [Configuration](configuration.md#vault_dir-and-output_base_dir-settingsyaml).
 
 ## Name your playlists
 
@@ -182,99 +172,11 @@ Add it yourself with `crontab -e`:
 
 sync-master does not modify your crontab for you.
 
-## Migrating an existing install
+## Backups
 
-If you're upgrading a pre-Postgres install (one with an existing
-`~/.config/sync-master/state.json` and a populated `output_base_dir`), run
-this once after setting up the database and filling in `DATABASE_URL`:
-
-```bash
-.venv/bin/sync-master migrate-legacy
-```
-
-This reads the old `state.json` and output directory tree and inserts the
-equivalent rows into Postgres (playlists, videos, action statuses, video
-files, transcripts, summaries). It's safe to re-run. A few things can't be
-recovered from the old format, since it never recorded them: which source
-(`captions` or `whisper`) each transcript came from (stored as `unknown`),
-per-speaker diarization segments (left empty), and the resolved Spotify
-track/playlist for a `spotify_sync` action that already succeeded (only its
-`done`/`no_match`/`failed` status carries over into `video_actions`, so it
-won't be needlessly redone — the `spotify_syncs` table itself just stays
-empty for those). All of this is captured correctly going forward. Once
-you've confirmed the import looks right, the old `state.json` and
-`output_base_dir` are no longer read by sync-master and can be deleted.
-
-## Exporting to an Obsidian vault
-
-```bash
-sync-master export-vault --vault ~/Documents/"Obsidian Vault" --dry-run   # show the tree
-sync-master export-vault --vault ~/Documents/"Obsidian Vault"             # write it
-```
-
-Lays the catalog out under `SYNC_MASTER/VIDEOS/YOUTUBE/` inside the vault:
-one folder per playlist, following the playlist name's dash-segments
-(`HUMAN-PODCASTS[!#]` → `HUMAN/PODCASTS/`), and inside it one folder per video
-named `N.Title`, where `N` is the video's position in the playlist on YouTube.
-Every video gets a note; the ones the pipeline has processed also get their
-`.mp4`, `.transcript.md` and `.summary.md` beside it, all carrying the same
-`N.Title` prefix so `[[links]]` stay unambiguous.
-
-Structure comes from YouTube (so the token must be valid) and content from
-Postgres. Re-running overwrites files in place and never deletes — a
-reordered playlist changes `N` and leaves the old folder behind. Set
-`vault_dir` in `settings.yaml` to skip `--vault`.
-
-## Backup and restore
-
-Everything durable lives in Postgres now, including video bytes (stored as
-Postgres Large Objects). `scripts/backup_db.sh` and `scripts/restore_db.sh`
-wrap `pg_dump`/`pg_restore`'s custom format (`-Fc`), which captures schema,
-data, and Large Objects together — a plain-format dump would silently drop
-the video bytes unless you remembered `-b` yourself.
-
-Needs the Postgres client tools, which aren't a Python dependency:
-
-```bash
-sudo dnf install postgresql   # or your distro's equivalent
-```
-
-Take a backup:
-
-```bash
-scripts/backup_db.sh
-```
-
-Writes a timestamped `.dump` file to `~/.config/sync-master/backups/`
-(outside the repo, so it can never end up committed) and updates a
-`latest.dump` symlink to it. Override the source with `--database-url` or
-the destination directory with `--output-dir`.
-
-Restore one:
-
-```bash
-scripts/restore_db.sh                                    # restores latest.dump into DATABASE_URL
-scripts/restore_db.sh --database-url ... some_backup.dump # restore a specific file elsewhere
-```
-
-Dumps keep the large-object grants the web UI relies on, so a restore into a
-database where `sync_master_web` already exists needs no follow-up; if the
-role doesn't exist yet, create it first (see [web-ui.md](web-ui.md)).
-
-**This is destructive to its target** — existing objects are dropped and
-replaced with the backup's contents. It asks for confirmation unless you
-pass `--yes` (needed for non-interactive/cron use). Pass `--create-db` if
-the target database doesn't exist yet (e.g. restoring onto a fresh server).
-
-If `pg_dump`/`pg_restore` are a newer major version than the Postgres server
-itself, you may see a warning about an unrecognized session parameter (e.g.
-`transaction_timeout`) — `restore_db.sh` already detects and ignores this
-specific known-harmless mismatch; the actual restore still completes
-correctly. Matching the client's major version to the server's avoids the
-warning entirely.
-
-Avoid running either script while a `sync-master run` involving heavy
-transcription/diarization is active — both scripts are safe to run
-concurrently with normal usage, but a CPU-saturated `sync-master run` can
-starve Postgres badly enough to make `pg_restore` (which writes Large
-Objects) noticeably slow.
+Everything durable is in the vault, as plain files — back it up the way you
+back up the rest of the vault (Obsidian Sync, git, a copy of the folder).
+`~/.config/sync-master/state.json` is the only other thing worth keeping: it
+records which actions have already run, so a lost copy means the next run
+re-does work (and, for `spotify_sync`, re-adds tracks) rather than losing any
+content.

@@ -5,28 +5,20 @@
 ```
 sync-master/
 ├── pyproject.toml
-├── alembic.ini
-├── alembic/
-│   ├── env.py
-│   └── versions/                # one file per migration, applied with `alembic upgrade head`
-├── docker-compose.yml            # local dev Postgres (mydb)
 ├── src/sync_master/
-│   ├── cli.py                  # Typer app: run, bootstrap, migrate-legacy, youtube-login, spotify-login
-│   ├── runner.py                # glues discovery + deterministic dispatch for one run
+│   ├── cli.py                  # Typer app: run, bootstrap, youtube-login, spotify-login
+│   ├── runner.py                # glues catalog + deterministic dispatch for one run
+│   ├── vault.py                 # the store: names, folder index, place/rename/refresh, writers
+│   ├── state.py                 # state.json (the action ledger) + the file lock
 │   ├── config.py                # llm.yaml, settings.yaml, spotify_overrides.json
-│   ├── playlist_naming.py       # parse_playlist_name: folder path + action flags from a title
-│   ├── db/
-│   │   ├── models.py             # SQLAlchemy ORM models (the schema)
-│   │   ├── engine.py             # engine/session factory from DATABASE_URL
-│   │   └── repository.py         # all reads/writes against Postgres, + the run lock
-│   ├── legacy_migration.py      # one-time state.json + output dir -> Postgres importer
-│   ├── bootstrap.py             # config scaffolding, credential/tool/DB checks
+│   ├── playlist_naming.py       # derive_folder_segments + parse_playlist_name
+│   ├── bootstrap.py             # config scaffolding, credential/tool/vault checks
 │   ├── youtube_auth.py          # YouTube OAuth client builder + one-time login flow
 │   ├── spotify_auth.py          # Spotify OAuth manager builder (stable cache path)
-│   ├── sources/youtube.py       # fetch_my_playlists, fetch_playlist_items, diff
+│   ├── sources/youtube.py       # fetch_my_playlists, fetch_playlist_items (with positions)
 │   ├── tools/                   # download, transcript, diarize, naming, summarize, spotify_*
 │   └── agent/orchestrator.py    # make_action_tools + run_actions_for_video (deterministic dispatch)
-└── tests/                       # pytest, mirrors the src/ layout (tests/db/ needs Postgres)
+└── tests/                       # pytest, mirrors the src/ layout
 ```
 
 ## Running tests
@@ -35,37 +27,17 @@ sync-master/
 .venv/bin/pytest
 ```
 
-Every module here is built test-first with dependencies injected (a fake
-YouTube client, a fake yt-dlp downloader, a fake LLM, a fake Spotify client,
-a fake repository, etc.), so the full suite runs in well under a second with
-no network access and no API keys required — **except** `tests/db/`, which
-exercises `db/repository.py` against a real Postgres database (see
-[Database](#database) below); those tests skip automatically if none is
-reachable.
+Every module is built test-first with dependencies injected (a fake YouTube
+client, a fake yt-dlp downloader, a fake LLM, a fake Spotify client, and a
+`tmp_path` standing in for the vault), so the full suite runs in well under
+a second with no network access, no API keys, and no services of any kind.
+The one test that needs `ffmpeg` on `PATH` (it decodes real audio) skips
+itself when it isn't.
 
-## Database
-
-`tests/db/test_repository.py` needs a real Postgres to test the
-Postgres-specific bits (`ON CONFLICT` upserts, advisory locks, array/enum
-columns) that can't be faked. Point it at any throwaway database via
-`TEST_DATABASE_URL`:
-
-```bash
-docker compose up -d postgres
-createdb -h localhost -U sync_master mydb_test   # or: psql ... -c 'CREATE DATABASE mydb_test'
-TEST_DATABASE_URL=postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb_test .venv/bin/pytest tests/db
-```
-
-It defaults to `postgresql+psycopg2://sync_master:changeme@localhost:5432/mydb_test`
-(matching `docker-compose.yml`) if unset. The schema is created directly from
-`db/models.py` (not via Alembic) at the start of the test session and
-dropped at the end; each test runs in a transaction that's rolled back
-afterward, so tests never see each other's data.
-
-Everywhere else in the codebase (`runner.py`, `agent/orchestrator.py`), the
-repository functions are injected as keyword arguments with the real ones as
-defaults — exactly like `fetch_playlists_fn` or `download_fn` — so unit
-tests for those modules pass in fakes and never need a live database at all.
+`tests/test_vault.py` is where the behaviour that matters most for your
+notes lives: that a reorder renames a folder rather than duplicating it,
+that a refresh never touches the body of a note, that a note moved outside
+the managed root is left alone.
 
 ## Dry-run mode
 
@@ -73,18 +45,14 @@ tests for those modules pass in fakes and never need a live database at all.
 .venv/bin/sync-master run --dry-run
 ```
 
-Runs the full pipeline — discover playlists, parse names, fetch, diff — but
-every tool call is logged instead of executed: nothing is downloaded, the
-LLM inside `summarize` is never called, no Spotify playlist is modified or
-created, and no `video_actions` row is written for dry-run calls (playlists
-and newly-discovered videos are still upserted into Postgres, same as a real
-run — only the action dispatch itself is skipped). Since dispatch is
-deterministic (no decision-making LLM call in this design), dry-run costs
-nothing and calls no external API at all —
-it's pure local parsing and logging. This is the primary way to check that
+Fetches every playlist and video from YouTube and reports what a real run
+would do — how many folders it would create or move, and which actions it
+would run for which videos — but **writes nothing**: no notes, no state,
+no downloads, no LLM call, no Spotify change. This is the way to check that
 your playlist naming produces the action list you expect (see
-[Configuration](configuration.md#playlist-naming-scheme)) across a large,
-messy real account before it touches anything for real.
+[Configuration](configuration.md#playlist-naming-scheme)), and, after
+reorganising the vault, to check the sync still recognises everything
+(`created 0 folders` is what you want to see).
 
 ## Adding a new tool/action
 
